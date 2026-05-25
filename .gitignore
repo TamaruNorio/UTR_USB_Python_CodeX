@@ -8,3 +8,6 @@ venv/
 *.egg-info/
 dist/
 build/
+.pytest_cache/
+logs/
+pr_body.md
