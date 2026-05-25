@@ -48,3 +48,21 @@ UTR_USB_Python/
 
 このリポジトリのソースコードは **MIT License** の下で公開されています。詳細は [LICENSE](./LICENSE) ファイルをご確認ください。
 
+
+## Development checks
+
+This CodeX work repository includes small PowerShell helpers for local checks and PR preparation.
+
+```powershell
+.\scripts\dev_check.ps1
+.\scripts\git_preflight.ps1
+.\scripts\publish_pr.ps1 -Message "commit message" -Title "PR title"
+.\scripts\sync_after_merge.ps1 -Branch "work-branch"
+```
+
+- `dev_check.ps1` shows `git status --short`, runs pytest against `tests`, runs the blocked-text scan, and checks `.gitignore`.
+- `git_preflight.ps1` shows branch, status, diff stat, recent log, and then runs `dev_check.ps1`.
+- `publish_pr.ps1` commits and pushes only after `YES` confirmation, generates `pr_body.md`, copies it to the clipboard, and opens the PR creation URL when it can infer one.
+- `sync_after_merge.ps1` syncs `main` and deletes the local work branch only after `YES` confirmation.
+
+These helpers do not run USB hardware communication and do not run `src/utr_usb_sample.py`.
