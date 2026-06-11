@@ -13,12 +13,12 @@
 | 7 | `main` とCLI処理を `utr_cli.py` に整理 | `src/utr_cli.py`, `src/utr_usb_sample.py` | 入力プロンプトや実行順序を不用意に変えない | `powershell -File scripts/dev_check.ps1` | ユーザー入力フローの破損 | `main` を旧構成へ戻す |
 | 8 | `src/utr_usb_sample.py` を互換エントリーポイントとして残す | `src/utr_usb_sample.py` | ファイル削除、互換性破壊 | `powershell -File scripts/git_preflight.ps1` | 既存実行方法が壊れる | 旧エントリーポイントを復元 |
 | 9 | 実機通信前にpytest/dev_check/git_preflightを実行 | 変更なし | 実機通信を始めない | `powershell -File scripts/dev_check.ps1`, `powershell -File scripts/git_preflight.ps1` | テスト失敗、secret scan失敗 | 直前の変更を見直す |
-| 10 | 明示許可後にUSB実機通信確認 | 実機確認ログ | 無許可で実機通信しない、送信出力を書き換えない | 実機確認手順に従う | COMポート不一致、NACK、タイムアウト | 実機操作を止め、ログを保存して原因確認 |
+| 10 | USB実機通信確認 | 実機確認ログ | 手順確認なしで実機通信しない、送信出力を書き換えない | 実機確認手順に従う | COMポート不一致、NACK、タイムアウト | 実機操作を止め、ログを保存して原因確認 |
 
 ## 実行時の共通ルール
 
 - 各Stepは小さく分け、Stepごとに pytest/dev_check を通します。
-- 実機通信を伴う処理変更は、実機確認の明示許可後に扱います。
+- 実機通信を伴う処理変更は、手順と接続条件を確認してから扱います。
 - 送信出力設定、タグ書き込み、ブザー制御は副作用があるため慎重に扱います。
 - 不明な仕様は「要仕様書確認」として残し、推測で実装を変えません。
 - 戻す場合は、対象Stepで変更したファイルだけを戻す方針にします。
