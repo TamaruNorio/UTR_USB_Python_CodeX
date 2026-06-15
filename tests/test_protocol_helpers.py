@@ -2,6 +2,19 @@ import src.utr_inventory as inventory
 import src.utr_protocol as protocol
 
 
+def test_parse_little_endian_u16_reads_protocol_values():
+    # テスト用の人工データ: 送信出力 24.0 dBm に相当する 240 を little-endian で表した値。
+    assert protocol.parse_little_endian_u16(bytes([0xF0, 0x00])) == 240
+
+
+def test_parse_little_endian_u16_rejects_invalid_length():
+    # テスト用の人工データ: 2 バイト以外は受け付けない。
+    import pytest
+
+    with pytest.raises(ValueError):
+        protocol.parse_little_endian_u16(bytes([0xF0]))
+
+
 def test_calculate_sum_value_uses_low_byte_sum():
     # テスト用の人工データ: ROM_VERSION_CHECK の STX から ETX まで。
     frame_without_sum_cr = bytes([0x02, 0x00, 0x4F, 0x01, 0x90, 0x03])
@@ -62,6 +75,58 @@ def test_check_inventory_ack_response_reads_little_endian_count():
     inventory_ack = bytes([0x02, 0x00, 0x30, 0x04, 0x10, 0x00, 0x03, 0x00, 0x03, 0x4C, 0x0D])
 
     assert inventory.check_inventory_ack_response(inventory_ack) == 3
+
+
+def test_parse_inventory_ack_response_reads_count_and_channel():
+    # テスト用の人工ACKデータ: count=3, channel=5 を含む。
+    inventory_ack = bytes([0x02, 0x00, 0x30, 0x05, 0x10, 0x00, 0x03, 0x00, 0x05, 0x03, 0x50, 0x0D])
+
+    assert inventory.parse_inventory_ack_response(inventory_ack) == (3, 5)
+
+
+def test_parse_inventory_param_response_returns_japanese_display_values():
+    # テスト用の人工データ。仕様書の応答例をそのまま固定値として使用する。
+    response = bytes([
+        0x02, 0x00, 0x30, 0x0B, 0x41, 0x00, 0x1F, 0xDC, 0x81, 0x02,
+        0x00, 0x00, 0x00, 0x00, 0x02, 0x03, 0x01, 0x0D,
+    ])
+
+    parsed = inventory.parse_inventory_param_response(response)
+
+    assert parsed["parameter_type_text"] == "コマンドモード用のパラメータ"
+    assert parsed["select_command_enabled"] is True
+    assert parsed["q_auto_enabled"] is True
+    assert parsed["anti_collision_enabled"] is True
+    assert parsed["q_start"] == 3
+    assert parsed["inventory_target"] == "A"
+    assert parsed["session"] == "S0"
+    assert parsed["sel"] == "SL"
+    assert parsed["trext"] == "Use pilot tone"
+    assert parsed["m"] == "M4"
+    assert parsed["dr"] == "64/3"
+    assert parsed["q_min"] == 1
+    assert parsed["q_max"] == 8
+    assert parsed["mem_bank"] == "TID"
+    assert parsed["tid_enabled"] is False
+    assert parsed["read_start_word_address_hex"] == "00000000"
+    assert parsed["read_word_count"] == 2
+
+
+def test_format_inventory_param_response_returns_display_lines():
+    response = bytes([
+        0x02, 0x00, 0x30, 0x0B, 0x41, 0x00, 0x1F, 0xDC, 0x81, 0x02,
+        0x00, 0x00, 0x00, 0x00, 0x02, 0x03, 0x01, 0x0D,
+    ])
+
+    parsed = inventory.parse_inventory_param_response(response)
+    lines = inventory.format_inventory_param_response(parsed)
+
+    assert "パラメータの種類: コマンドモード用のパラメータ" in lines
+    assert "Selectコマンド: 使用する" in lines
+    assert "Q値の開始値: 3" in lines
+    assert "TRext(Pilot tone): Use pilot tone" in lines
+    assert "読み取り開始アドレス(Hex): 00000000" in lines
+    assert "読み取りWord数: 2" in lines
 
 
 def test_handle_inventory_response_appends_pc_uii_and_rssi():
