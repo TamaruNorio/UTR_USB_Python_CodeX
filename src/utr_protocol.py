@@ -35,6 +35,24 @@ CMD_LOCATION: int = 2
 DETAIL_LOCATION: int = 4
 
 
+def parse_little_endian_u16(data: bytes) -> int:
+    """2バイトの little-endian 値を符号なし 16bit 整数として読み取ります。
+
+    Args:
+        data: 下位バイト、上位バイトの順で並んだ 2 バイト列。
+
+    Returns:
+        0 から 65535 の整数値。
+
+    Raises:
+        ValueError: 2 バイト以外が渡された場合。
+    """
+    if len(data) != 2:
+        raise ValueError("little-endian 16bit value must be exactly 2 bytes")
+
+    return int.from_bytes(data, byteorder="little", signed=False)
+
+
 def calculate_sum_value(data: bytes) -> int:
     """SUM値を計算します。
 

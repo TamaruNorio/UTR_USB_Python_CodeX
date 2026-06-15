@@ -68,6 +68,10 @@ import serial
 from   serial.tools import list_ports
 
 from   typing       import List, Optional, Tuple
+try:
+    from src.utr_inventory import format_inventory_param_response, parse_inventory_param_response
+except ModuleNotFoundError:
+    from utr_inventory import format_inventory_param_response, parse_inventory_param_response
 
 
 # UTR用 シリアル送信コマンドの定義
@@ -256,7 +260,7 @@ def handle_inventory_response(data_frame: bytes, pc_uii_list: List[bytes], rssi_
 
 
 # インベントリ時のACKのレスポンスデータから読み取り枚数を取得する。
-def check_inventory_ack_response(data_frame: bytes) -> int:
+def check_inventory_ack_response(data_frame: bytes) -> Tuple[int, int]:
     """
     インベントリ時のACK応答フレームから、期待される読み取り枚数を抽出して返す。
 
@@ -264,12 +268,13 @@ def check_inventory_ack_response(data_frame: bytes) -> int:
         data_frame (bytes): 受信したACK応答フレーム。
 
     Returns:
-        int: 期待される読み取り枚数。
+        Tuple[int, int]: 期待される読み取り枚数とチャンネル番号。
     """
     # 7バイト目と8バイト目（Pythonのインデックスでは6:8）が読み取り枚数
     # リトルエンディアンの順序で整数に変換
     read_count = int.from_bytes(data_frame[6:8], byteorder='little')
-    return read_count
+    channel = data_frame[8]
+    return read_count, channel
 
 
 # データフレームを解析し、STX-ETX-SUM-CRまでを抜き出す
@@ -305,7 +310,7 @@ def parse_data_frame(data: bytes, index: int) -> Tuple[Optional[bytes], int]:
 
 # シリアル受信したデータ(受信解析後)の中からタグの情報などを抜き出す
 # インベントリコマンド用
-def received_data_parse(data: bytes) -> Tuple[List[bytes], List[float], Optional[int]]:
+def received_data_parse(data: bytes) -> Tuple[List[bytes], List[float], Optional[int], Optional[int]]:
     """
     受信したバイト列から複数のフレームを走査し、インベントリ結果を解析する。
     PC+UIIリスト、RSSIリスト、期待される読み取り枚数を抽出する。
@@ -314,14 +319,16 @@ def received_data_parse(data: bytes) -> Tuple[List[bytes], List[float], Optional
         data (bytes): 受信した生のデータバイト列。
 
     Returns:
-        Tuple[List[bytes], List[float], Optional[int]]: 
+        Tuple[List[bytes], List[float], Optional[int], Optional[int]]:
             - pc_uii_list (List[bytes]): 読み取られたPC+UIIデータのリスト。
             - rssi_list (List[float]): 読み取られたRSSI値のリスト。
             - expected_read_count (Optional[int]): 期待される読み取りタグ数 (ACKフレームから取得)。
+            - read_channel (Optional[int]): 読み取り時のチャンネル番号 (ACKフレームから取得)。
     """
     pc_uii_list: List[bytes] = []  # UII格納用
     rssi_list: List[float] = []  # RSSI値格納用
     expected_read_count: Optional[int] = None   # ACKレスポンスから取得した読み取り枚数
+    read_channel: Optional[int] = None   # ACKレスポンスから取得した読み取りチャンネル番号
 
     i = 0
     while i < len(data):
@@ -344,7 +351,7 @@ def received_data_parse(data: bytes) -> Tuple[List[bytes], List[float], Optional
                         # コマンドがACK (0x30) なら、ACKの応答として処理
                         if detail_command == DETAIL_INV:
                             # 詳細コマンドがインベントリACK (0x10) なら、読み取り枚数を取得
-                            expected_read_count = check_inventory_ack_response(data_frame)
+                            expected_read_count, read_channel = check_inventory_ack_response(data_frame)
                         # else: 他のACK応答はここでは特に処理しない
 
                     elif command == NACK:
@@ -354,7 +361,7 @@ def received_data_parse(data: bytes) -> Tuple[List[bytes], List[float], Optional
                 else:
                     print("サム値が正しくありません（途中までの結果を返します）")
                     # この処理以前に解析したデータ(タグIDなど）を返す
-                    return pc_uii_list, rssi_list, expected_read_count
+                    return pc_uii_list, rssi_list, expected_read_count, read_channel
 
                 # 次の開始位置に変更
                 i = next_idx
@@ -363,7 +370,7 @@ def received_data_parse(data: bytes) -> Tuple[List[bytes], List[float], Optional
                 # 完全なフレームが見つからなかった場合、現在の解析を打ち切る
                 print("データがありません、または不完全なフレームです")
                 # この処理以前に解析したデータ(タグIDなど）を返す
-                return pc_uii_list, rssi_list, expected_read_count
+                return pc_uii_list, rssi_list, expected_read_count, read_channel
         else:
             # STXが見つからない場合は1バイト進める
             i += 1
@@ -378,7 +385,7 @@ def received_data_parse(data: bytes) -> Tuple[List[bytes], List[float], Optional
             print("pc_uii_listの個数   : ",  len(pc_uii_list))
 
     # 解析したデータ(タグIDなど）を返す
-    return pc_uii_list, rssi_list, expected_read_count
+    return pc_uii_list, rssi_list, expected_read_count, read_channel
 
 
 # NACK応答時のエラー解析(初歩、一例) 全部は網羅してません。
@@ -634,17 +641,11 @@ def main():
         ser.close()
         sys.exit(1)
 
-    # インベントリパラメータ設定コマンドを送信
-    result = communicate(ser, COMMANDS['UHF_SET_INVENTORY_PARAM'])
-    if re.match(STX + b'.' + ACK, result):
-        print("UHF_SET_INVENTORY_PARAM が正常に実行されました")
-    elif re.match(STX + b'.' + NACK, result):
-        print(parse_nack_response(result))
-    else:
-        print("UHF_SET_INVENTORY_PARAM 実行エラー")
-        print(result.hex())
-        ser.close()
-        sys.exit(1)
+    print("UHF_GET_INVENTORY_PARAM response:", result.hex().upper())
+    inventory_param = parse_inventory_param_response(result)
+    for line in format_inventory_param_response(inventory_param):
+        print(line)
+    print("UHF_SET_INVENTORY_PARAM は自動送信しません。設定変更は行いません。")
 
     # --- 読み取りループ ---
     total_read_time   = 0.0 # 総読み取り時間
@@ -672,10 +673,16 @@ def main():
             result = communicate(ser, COMMANDS['UHF_INVENTORY'])
             if result:
                 # 受信データを解析し、PC+UIIリスト、RSSIリスト、期待される読み取り数を取得
-                pc_uii_list, rssi_list, expected_count = received_data_parse(result)
-                for pc_uii in pc_uii_list:
+                pc_uii_list, rssi_list, expected_count, read_channel = received_data_parse(result)
+                if expected_count is not None:
+                    print(f"読み取り完了レスポンス枚数: {expected_count} 枚")
+                if read_channel is not None:
+                    print(f"読み取りチャンネル: {read_channel} ch")
+
+                for pc_uii, rssi_value in zip(pc_uii_list, rssi_list):
                     pc_uii_hex = pc_uii.hex().upper() # PC+UIIを16進数文字列に変換
                     print(f"PC+UII: {pc_uii_hex}")
+                    print(f"RSSI: {rssi_value:.1f} dBm")
                     pc_uii_count_dict[pc_uii_hex] = pc_uii_count_dict.get(pc_uii_hex, 0) + 1 # カウントを更新
                 total_read_count += len(pc_uii_list)
             else:
