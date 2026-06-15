@@ -15,6 +15,19 @@ def test_parse_little_endian_u16_rejects_invalid_length():
         protocol.parse_little_endian_u16(bytes([0xF0]))
 
 
+def test_parse_output_power_dbm_reads_lsb_msb_value():
+    assert protocol.parse_output_power_dbm(b"\xF0\x00") == 24.0
+    assert protocol.parse_output_power_dbm(b"\x64\x00") == 10.0
+    assert protocol.parse_output_power_dbm(b"\x00\x00") == 0.0
+
+
+def test_parse_output_power_dbm_rejects_short_data():
+    import pytest
+
+    with pytest.raises(ValueError, match="output power level must be exactly 2 bytes"):
+        protocol.parse_output_power_dbm(b"\xF0")
+
+
 def test_calculate_sum_value_uses_low_byte_sum():
     # テスト用の人工データ: ROM_VERSION_CHECK の STX から ETX まで。
     frame_without_sum_cr = bytes([0x02, 0x00, 0x4F, 0x01, 0x90, 0x03])

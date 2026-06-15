@@ -71,10 +71,12 @@ from   serial.tools import list_ports
 from   typing       import List, Optional, Tuple
 try:
     from src.utr_inventory import format_inventory_param_response, parse_inventory_param_response
+    from src.utr_protocol import parse_output_power_dbm
     from src.utr_result_export import build_result_summary, save_results_to_csv, save_results_to_json
     from src.utr_serial_ports import format_port_info, find_port_by_user_input, is_quit_input
 except ModuleNotFoundError:
     from utr_inventory import format_inventory_param_response, parse_inventory_param_response
+    from utr_protocol import parse_output_power_dbm
     from utr_result_export import build_result_summary, save_results_to_csv, save_results_to_json
     from utr_serial_ports import format_port_info, find_port_by_user_input, is_quit_input
 
@@ -631,9 +633,8 @@ def main():
     result = communicate(ser, COMMANDS['UHF_READ_OUTPUT_POWER'])
     if re.match(STX + b'.' + ACK, result):
         # 応答から出力レベルを抽出し、dBmに変換して表示
-        # 8バイト目と7バイト目を結合して16進数として扱い、10進数に変換後10で割る
-        level_hex = result[7:9].hex() # 7バイト目と8バイト目を抽出
-        output_power_level = int(level_hex, 16) / 10.0
+        print("UHF_READ_OUTPUT_POWER response:", result.hex().upper())
+        output_power_level = parse_output_power_dbm(result[7:9])
         print("送信出力値：", output_power_level, "dBm")
     elif re.match(STX + b'.' + NACK, result):
         print(parse_nack_response(result))

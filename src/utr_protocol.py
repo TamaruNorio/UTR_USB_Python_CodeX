@@ -53,6 +53,27 @@ def parse_little_endian_u16(data: bytes) -> int:
     return int.from_bytes(data, byteorder="little", signed=False)
 
 
+def parse_output_power_dbm(data: bytes) -> float:
+    """RF送信出力レベルを dBm に変換します。
+
+    UHF_READ_OUTPUT_POWER (`55 43 01`) のRF送信出力レベルは
+    `dBm * 10` で、1バイト目がLSB、2バイト目がMSBです。
+
+    Args:
+        data: RF送信出力レベルの2バイト列。LSB、MSBの順です。
+
+    Returns:
+        dBm 単位の送信出力値。
+
+    Raises:
+        ValueError: 2バイト以外が渡された場合。
+    """
+    if len(data) != 2:
+        raise ValueError("output power level must be exactly 2 bytes")
+
+    return parse_little_endian_u16(data) / 10.0
+
+
 def calculate_sum_value(data: bytes) -> int:
     """SUM値を計算します。
 
