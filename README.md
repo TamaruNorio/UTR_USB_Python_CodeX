@@ -96,6 +96,9 @@ powershell -ExecutionPolicy Bypass -File scripts/git_preflight.ps1
 
 ## ドキュメント
 
+- [フィールドサポート向け Quick Start](docs/quick_start_for_field_support.md)
+- [RSSI検証計画](docs/rssi_validation_plan.md)
+- [UTRRWManager比較テンプレート](docs/utr_rw_manager_comparison_template.md)
 - [USB実機確認メモ](docs/usb_real_device_check_notes.md)
 - [UHF Inventory応答解析メモ](docs/uhf_inventory_response_parsing.md)
 
