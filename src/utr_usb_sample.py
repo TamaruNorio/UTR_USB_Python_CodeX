@@ -70,8 +70,10 @@ from   serial.tools import list_ports
 from   typing       import List, Optional, Tuple
 try:
     from src.utr_inventory import format_inventory_param_response, parse_inventory_param_response
+    from src.utr_serial_ports import format_port_info, find_port_by_user_input, is_quit_input
 except ModuleNotFoundError:
     from utr_inventory import format_inventory_param_response, parse_inventory_param_response
+    from utr_serial_ports import format_port_info, find_port_by_user_input, is_quit_input
 
 
 # UTR用 シリアル送信コマンドの定義
@@ -516,6 +518,43 @@ def save_results_to_file(filename: str, total_iterations: int, total_read_time: 
         f.write("========= ここまで ============\n\n\n")
 
 
+def print_available_ports(ports) -> None:
+    """Print available serial ports with details useful for field support."""
+    print("利用可能なCOMポート:")
+    for i, port in enumerate(ports):
+        for line in format_port_info(port, i):
+            print(f"  {line}")
+
+
+def prompt_for_port_name(ports) -> str:
+    """Prompt until the user selects a serial port or quits."""
+    print_available_ports(ports)
+
+    if len(ports) == 1:
+        while True:
+            answer = input("COMポートが1件だけ見つかりました。このポートを使用しますか？（Enter/y=使用、n=選択、q=終了）: ").strip()
+            if answer == "" or answer.lower() == "y":
+                return ports[0].device
+            if answer.lower() == "n":
+                break
+            if is_quit_input(answer):
+                print("COMポート選択を終了します。")
+                sys.exit(0)
+            print("無効な入力です。Enter、y、n、q のいずれかを入力してください。")
+
+    while True:
+        user_input = input("接続するCOMポートの番号またはCOM名を入力してください（終了は'q'）: ")
+        if is_quit_input(user_input):
+            print("COMポート選択を終了します。")
+            sys.exit(0)
+
+        selected_port = find_port_by_user_input(user_input, ports)
+        if selected_port is not None:
+            return selected_port.device
+
+        print("無効な入力です。表示された番号または COM名（例: COM6）を入力してください。")
+
+
 # メイン処理
 def main():
     """
@@ -531,18 +570,7 @@ def main():
         print("利用可能なCOMポートが見つかりませんでした。")
         sys.exit(1)
 
-    print("利用可能なCOMポート:")
-    for i, p in enumerate(ports):
-        print(f"  [{i}]: {p.device} - {p.description}")
-
-    selected_port_index = -1
-    while not (0 <= selected_port_index < len(ports)):
-        try:
-            selected_port_index = int(input("接続するCOMポートの番号を入力してください: "))
-        except ValueError:
-            print("無効な入力です。数字を入力してください。")
-
-    port_name = ports[selected_port_index].device
+    port_name = prompt_for_port_name(ports)
 
     baud_rate_str = input("ボーレートを入力してください（例: 19200, 115200, 未入力なら19200）: ").strip()
     baud_rate = int(baud_rate_str) if baud_rate_str else 19200
