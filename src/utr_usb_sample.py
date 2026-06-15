@@ -63,6 +63,7 @@ import sys
 import time
 import datetime
 import re
+import json
 
 import serial
 from   serial.tools import list_ports
@@ -70,9 +71,11 @@ from   serial.tools import list_ports
 from   typing       import List, Optional, Tuple
 try:
     from src.utr_inventory import format_inventory_param_response, parse_inventory_param_response
+    from src.utr_result_export import build_result_summary, save_results_to_csv, save_results_to_json
     from src.utr_serial_ports import format_port_info, find_port_by_user_input, is_quit_input
 except ModuleNotFoundError:
     from utr_inventory import format_inventory_param_response, parse_inventory_param_response
+    from utr_result_export import build_result_summary, save_results_to_csv, save_results_to_json
     from utr_serial_ports import format_port_info, find_port_by_user_input, is_quit_input
 
 
@@ -748,6 +751,17 @@ def main():
     # --- 集計結果の保存 ---
     save_results_to_file("inventory_results.txt", total_iterations, total_read_time, total_read_count, pc_uii_count_dict)
     print("集計結果を inventory_results.txt に保存しました。")
+    summary = build_result_summary(total_iterations, total_read_time, total_read_count, pc_uii_count_dict)
+    try:
+        save_results_to_csv("inventory_results.csv", summary)
+        print("集計結果を inventory_results.csv に保存しました。")
+    except OSError as e:
+        print(f"CSV保存エラー: {e}")
+    try:
+        save_results_to_json("inventory_results.json", summary)
+        print("集計結果を inventory_results.json に保存しました。")
+    except (OSError, ValueError, json.JSONDecodeError) as e:
+        print(f"JSON保存エラー: {e}")
 
     # --- シリアルポートクローズ ---
     if ser and ser.is_open:

@@ -37,6 +37,9 @@ UTRRWManager で接続、ROM バージョン確認、タグ読み取りなどの
 - 設定変更系コマンドは不用意に実行しないでください。
 - 実機通信は、接続条件と手順を確認した後に行ってください。
 - 顧客情報、実シリアル番号、実タグ ID、未マスクの実測ログは記録や共有時に混入させないでください。
+- Inventory結果は `inventory_results.txt`、`inventory_results.csv`、`inventory_results.json` に保存されます。
+- CSVはExcelでの確認向け、JSONは後続処理や比較用です。
+- 実測PC/UIIやログを公開する場合は、必ずマスクしてください。
 
 ## よく使う確認
 
