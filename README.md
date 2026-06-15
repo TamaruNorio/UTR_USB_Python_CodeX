@@ -107,6 +107,8 @@ powershell -ExecutionPolicy Bypass -File scripts/git_preflight.ps1
 USB実機通信を行う前に、UTRRWManagerなどで接続条件と機器状態を事前確認してください。
 
 - COMポートが認識されていることを確認する。
+- サンプル実行時のCOMポート選択では、表示された番号または `COM6` のようなCOM名を入力できます。
+- COMポート選択中に `q` を入力すると、接続前に終了できます。
 - 通信速度を確認する。
 - 機器設定を確認する。
 - UTR機器の電源を確認する。
