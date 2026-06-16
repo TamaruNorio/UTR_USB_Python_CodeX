@@ -560,6 +560,48 @@ def prompt_for_port_name(ports) -> str:
         print("無効な入力です。表示された番号または COM名（例: COM6）を入力してください。")
 
 
+def parse_yes_no_answer(value: str, default: bool = False) -> Optional[bool]:
+    """Parse a y/n answer. Returns None when the input is invalid."""
+    normalized = value.strip().lower()
+    if normalized == "":
+        return default
+    if normalized == "y":
+        return True
+    if normalized == "n":
+        return False
+    return None
+
+
+def ask_yes_no(prompt: str, default: bool = False) -> bool:
+    """Ask a y/n question until a valid answer is entered."""
+    while True:
+        answer = parse_yes_no_answer(input(prompt), default=default)
+        if answer is not None:
+            return answer
+        print("無効な入力です。y または n を入力してください。")
+
+
+def select_buzzer_command_for_inventory_result(has_tag: bool) -> bytes:
+    """Return the buzzer command for an inventory result."""
+    if has_tag:
+        return COMMANDS['UHF_BUZZER_pipipi']
+    return COMMANDS['UHF_BUZZER_pi']
+
+
+def play_buzzer_for_inventory_result(ser: serial.Serial, has_tag: bool) -> None:
+    """Play a buzzer notification for one inventory result."""
+    buzzer_response = communicate(ser, select_buzzer_command_for_inventory_result(has_tag))
+    if re.match(STX + b'.' + ACK, buzzer_response):
+        if has_tag:
+            print("タグを検出したため、ブザー通知を実行しました（ピッピッピ）")
+        else:
+            print("タグ未検出のため、ブザー通知を実行しました（ピー）")
+    elif re.match(STX + b'.' + NACK, buzzer_response):
+        print(parse_nack_response(buzzer_response))
+    else:
+        print("ブザー制御 ACK/NACK なし")
+
+
 # メイン処理
 def main():
     """
@@ -684,6 +726,7 @@ def main():
     total_read_count  = 0   # 総読み取りタグ数
     total_iterations  = 0   # 総繰り返し回数
     pc_uii_count_dict = {}  # PC+UIIごとの読み取り回数を格納する辞書
+    buzzer_enabled = ask_yes_no("読み取り結果をブザーで通知しますか？ [y/N]: ", default=False)
 
     while True:
         try:
@@ -717,37 +760,18 @@ def main():
                     print(f"RSSI: {rssi_value:.1f} dBm")
                     pc_uii_count_dict[pc_uii_hex] = pc_uii_count_dict.get(pc_uii_hex, 0) + 1 # カウントを更新
                 total_read_count += len(pc_uii_list)
+                if buzzer_enabled:
+                    play_buzzer_for_inventory_result(ser, has_tag=len(pc_uii_list) > 0)
             else:
                 print("インベントリ応答がありませんでした。")
+                if buzzer_enabled:
+                    play_buzzer_for_inventory_result(ser, has_tag=False)
 
         end_time = time.time()
         total_read_time += (end_time - start_time)
 
         print(f"現在の合計読み取り時間: {total_read_time:.2f} 秒")
         print(f"現在の合計読み取り枚数: {total_read_count} 枚")
-
-    # --- ブザー制御 ---
-    # ブザーを鳴らす (ピッピッピ)
-    print("ブザーを鳴らします (ピッピッピ)")
-    buzzer_response = communicate(ser, COMMANDS['UHF_BUZZER_pipipi'])
-    if re.match(STX + b'.' + ACK, buzzer_response):
-        print("ブザー制御 ACK 受信")
-    elif re.match(STX + b'.' + NACK, buzzer_response):
-        print(parse_nack_response(buzzer_response))
-    else:
-        print("ブザー制御 ACK/NACK なし")
-
-    time.sleep(1) # 1秒待機
-
-    # ブザーを止める (ピー)
-    print("ブザーを止めます (ピー)")
-    buzzer_response = communicate(ser, COMMANDS['UHF_BUZZER_pi'])
-    if re.match(STX + b'.' + ACK, buzzer_response):
-        print("ブザー制御 ACK 受信")
-    elif re.match(STX + b'.' + NACK, buzzer_response):
-        print(parse_nack_response(buzzer_response))
-    else:
-        print("ブザー制御 ACK/NACK なし")
 
     # --- 集計結果の保存 ---
     save_results_to_file("inventory_results.txt", total_iterations, total_read_time, total_read_count, pc_uii_count_dict)
