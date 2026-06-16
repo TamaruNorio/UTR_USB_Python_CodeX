@@ -1005,15 +1005,49 @@ def restore_command_mode_antenna_setting(
         return False
 
 
+def drain_serial_input_until_quiet(
+    ser: serial.Serial,
+    quiet_seconds: float = 0.8,
+    max_seconds: float = 5.0,
+) -> int:
+    """Discard delayed serial input until the input buffer stays quiet."""
+    read = getattr(ser, "read", None)
+    if not callable(read):
+        return 0
+
+    deadline = time.monotonic() + max_seconds
+    quiet_deadline = time.monotonic() + quiet_seconds
+    drained_total = 0
+
+    while time.monotonic() < deadline:
+        waiting = int(getattr(ser, "in_waiting", 0) or 0)
+
+        if waiting > 0:
+            drained = read(waiting)
+            drained_total += len(drained)
+            quiet_deadline = time.monotonic() + quiet_seconds
+            continue
+
+        if time.monotonic() >= quiet_deadline:
+            break
+
+        time.sleep(0.05)
+
+    return drained_total
+
+
 def clear_serial_input_buffer_before_restore(ser: serial.Serial) -> None:
-    """アンテナ設定復元前に、受信バッファの残データを可能な範囲で破棄します。"""
+    """???????????????????????????????????"""
     reset_input_buffer = getattr(ser, "reset_input_buffer", None)
     if not callable(reset_input_buffer):
         return
 
     try:
         reset_input_buffer()
+        drained_total = drain_serial_input_until_quiet(ser)
         print("復元前に受信バッファをクリアしました。")
+        if drained_total:
+            print(f"復元前の残データを読み捨てました: {drained_total} bytes")
     except Exception:
         print("復元前の受信バッファクリアに失敗しました。復元処理は継続します。")
 

@@ -217,3 +217,30 @@ def test_finish_inventory_session_restores_saves_and_closes(monkeypatch):
         ),
         "close",
     ]
+
+
+def test_drain_serial_input_until_quiet_discards_available_bytes():
+    calls = []
+
+    class FakeSerial:
+        def __init__(self):
+            self.waiting_values = [3, 0]
+
+        @property
+        def in_waiting(self):
+            if self.waiting_values:
+                return self.waiting_values.pop(0)
+            return 0
+
+        def read(self, size):
+            calls.append(size)
+            return b"x" * size
+
+    drained = utr_usb_sample.drain_serial_input_until_quiet(
+        FakeSerial(),
+        quiet_seconds=0.0,
+        max_seconds=0.5,
+    )
+
+    assert drained == 3
+    assert calls == [3]
