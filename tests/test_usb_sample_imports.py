@@ -3,6 +3,8 @@
 
 """src.utr_usb_sample のimport漏れ防止テスト。"""
 
+from types import SimpleNamespace
+
 from src import utr_usb_sample
 from src.utr_antenna import AntennaCheckTarget
 
@@ -36,3 +38,100 @@ def test_parse_inventory_antenna_selection_input_removes_duplicates_but_keeps_or
 def test_parse_inventory_antenna_selection_input_q_returns_none():
     selected = utr_usb_sample.parse_inventory_antenna_selection_input(_antenna_targets(), "q")
     assert selected is None
+
+
+def test_restore_antenna_setting_safely_reports_restore_failure(monkeypatch, capsys):
+    selection = SimpleNamespace(restore_setting=object())
+
+    def fake_restore(_ser, _setting):
+        return False
+
+    monkeypatch.setattr(utr_usb_sample, "restore_command_mode_antenna_setting", fake_restore)
+
+    utr_usb_sample.restore_antenna_setting_safely(SimpleNamespace(), selection)
+
+    output = capsys.readouterr().out
+    assert "コマンドモード用アンテナ設定の復元に失敗しました。" in output
+    assert "機器側の現在設定をUTRRWManagerまたは再実行時の読み取りで確認してください。" in output
+
+
+def test_restore_antenna_setting_safely_reports_restore_exception(monkeypatch, capsys):
+    selection = SimpleNamespace(restore_setting=object())
+
+    def fake_restore(_ser, _setting):
+        raise RuntimeError("restore failed")
+
+    monkeypatch.setattr(utr_usb_sample, "restore_command_mode_antenna_setting", fake_restore)
+
+    utr_usb_sample.restore_antenna_setting_safely(SimpleNamespace(), selection)
+
+    output = capsys.readouterr().out
+    assert "コマンドモード用アンテナ設定の復元に失敗しました。" in output
+    assert "復元エラー: restore failed" in output
+
+
+def test_finish_inventory_session_restores_saves_and_closes(monkeypatch):
+    calls = []
+    ser = SimpleNamespace(is_open=True)
+    selection = SimpleNamespace(restore_setting=object())
+
+    def fake_restore(_ser, _selection):
+        calls.append("restore")
+
+    def fake_save(total_iterations, total_read_time, total_read_count, pc_uii_count_dict, inventory_result_items):
+        calls.append(
+            (
+                "save",
+                total_iterations,
+                total_read_time,
+                total_read_count,
+                pc_uii_count_dict,
+                inventory_result_items,
+            )
+        )
+
+    def fake_close(_ser):
+        calls.append("close")
+
+    monkeypatch.setattr(utr_usb_sample, "restore_antenna_setting_safely", fake_restore)
+    monkeypatch.setattr(utr_usb_sample, "save_inventory_results", fake_save)
+    monkeypatch.setattr(utr_usb_sample, "close_serial_safely", fake_close)
+
+    utr_usb_sample.finish_inventory_session(
+        ser,
+        selection,
+        2,
+        1.5,
+        1,
+        {"E28011xxxxxxxxxxxxxx": 1},
+        {
+            ("E28011xxxxxxxxxxxxxx", 0, "ANT0", "内蔵アンテナ"): {
+                "pc_uii": "E28011xxxxxxxxxxxxxx",
+                "read_count": 1,
+                "antenna_number": 0,
+                "antenna_label": "ANT0",
+                "antenna_description": "内蔵アンテナ",
+            }
+        },
+    )
+
+    assert calls == [
+        "restore",
+        (
+            "save",
+            2,
+            1.5,
+            1,
+            {"E28011xxxxxxxxxxxxxx": 1},
+            [
+                {
+                    "pc_uii": "E28011xxxxxxxxxxxxxx",
+                    "read_count": 1,
+                    "antenna_number": 0,
+                    "antenna_label": "ANT0",
+                    "antenna_description": "内蔵アンテナ",
+                }
+            ],
+        ),
+        "close",
+    ]
