@@ -997,6 +997,19 @@ def restore_command_mode_antenna_setting(
         return False
 
 
+def clear_serial_input_buffer_before_restore(ser: serial.Serial) -> None:
+    """アンテナ設定復元前に、受信バッファの残データを可能な範囲で破棄します。"""
+    reset_input_buffer = getattr(ser, "reset_input_buffer", None)
+    if not callable(reset_input_buffer):
+        return
+
+    try:
+        reset_input_buffer()
+        print("復元前に受信バッファをクリアしました。")
+    except Exception:
+        print("復元前の受信バッファクリアに失敗しました。復元処理は継続します。")
+
+
 def restore_antenna_setting_safely(
     ser: serial.Serial,
     antenna_selection: Optional[InventoryAntennaSelection],
@@ -1004,6 +1017,8 @@ def restore_antenna_setting_safely(
     """中断時でも可能な限りコマンドモード用アンテナ設定を復元します。"""
     if antenna_selection is None:
         return
+
+    clear_serial_input_buffer_before_restore(ser)
 
     try:
         restored = restore_command_mode_antenna_setting(ser, antenna_selection.restore_setting)
