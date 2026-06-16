@@ -40,6 +40,14 @@ def test_parse_inventory_antenna_selection_input_q_returns_none():
     assert selected is None
 
 
+def test_inventory_antenna_selection_prompt_explains_q_keeps_current_setting():
+    prompt = utr_usb_sample.INVENTORY_ANTENNA_SELECTION_PROMPT
+
+    assert "終了は'q'" not in prompt
+    assert "アンテナを指定しない場合は q を入力してください。" in prompt
+    assert "現在のコマンドモード用アンテナ設定でInventoryを続行します。" in prompt
+
+
 def test_restore_antenna_setting_safely_reports_restore_failure(monkeypatch, capsys):
     selection = SimpleNamespace(restore_setting=object())
 

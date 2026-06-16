@@ -851,6 +851,14 @@ def parse_inventory_antenna_selection_input(
     return selected_targets
 
 
+INVENTORY_ANTENNA_SELECTION_PROMPT = (
+    "Inventoryに使用するアンテナ番号を入力してください（例: 0,1 / all）。\n"
+    "アンテナを指定しない場合は q を入力してください。\n"
+    "q を入力するとアンテナ設定を変更せず、現在のコマンドモード用アンテナ設定でInventoryを続行します。\n"
+    "入力: "
+)
+
+
 def prompt_for_inventory_antenna_targets(
     available_targets: list[AntennaCheckTarget],
 ) -> list[AntennaCheckTarget]:
@@ -882,7 +890,7 @@ def prompt_for_inventory_antenna_targets(
     print("複数選択時は、同時使用ではなく順番にアンテナを切り替えてInventoryします。")
 
     while True:
-        value = input("Inventoryに使用するアンテナ番号を入力してください（例: 0,1 / all、終了は'q'）: ").strip()
+        value = input(INVENTORY_ANTENNA_SELECTION_PROMPT).strip()
 
         try:
             selected_targets = parse_inventory_antenna_selection_input(available_targets, value)
