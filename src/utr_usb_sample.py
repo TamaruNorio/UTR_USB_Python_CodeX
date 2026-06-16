@@ -124,6 +124,7 @@ DETAIL_INV: bytes = b'\x10'  # インベントリの詳細コマンド
 
 # 出力チャンネルと周波数のマッピングリスト (MHz)
 OUTPUT_CH_FREQ_LIST = [916.0, 916.2, 916.4, 916.6, 916.8, 917.0, 917.2, 917.4, 917.6, 917.8, 918.0, 918.2, 918.4, 918.6, 918.8, 919.0, 919.2, 919.4, 919.6, 919.8, 920.0, 920.2, 920.4, 920.6, 920.8, 921.0, 921.2, 921.4, 921.6, 921.8, 922.0, 922.2, 922.4, 922.6, 922.8, 923.0, 923.2, 923.4]
+DEFAULT_BAUD_RATE = 115200
 
 #【シリアルデータ通信関数】
 # データ送信後に、受信データ解析を実施
@@ -402,6 +403,14 @@ def print_nack_message(nack_response: bytes) -> None:
         print(line)
 
 
+def parse_baud_rate_input(value: str) -> int:
+    """ボーレート入力を整数に変換する。未入力はデフォルト値を使う。"""
+    normalized = value.strip()
+    if normalized == "":
+        return DEFAULT_BAUD_RATE
+    return int(normalized)
+
+
 # SUM値計算
 def calculate_sum_value(data: bytes) -> int:
     """
@@ -592,8 +601,8 @@ def main():
 
     port_name = prompt_for_port_name(ports)
 
-    baud_rate_str = input("ボーレートを入力してください（例: 19200, 115200, 未入力なら19200）: ").strip()
-    baud_rate = int(baud_rate_str) if baud_rate_str else 19200
+    baud_rate_str = input("ボーレートを入力してください（例: 19200, 115200, 未入力なら115200）: ")
+    baud_rate = parse_baud_rate_input(baud_rate_str)
 
     # --- シリアルポート設定 ---
     ser: Optional[serial.Serial] = None
