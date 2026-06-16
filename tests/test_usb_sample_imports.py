@@ -70,6 +70,49 @@ def test_restore_antenna_setting_safely_reports_restore_exception(monkeypatch, c
     assert "復元エラー: restore failed" in output
 
 
+def test_restore_antenna_setting_safely_clears_input_buffer_before_restore(monkeypatch, capsys):
+    calls = []
+    selection = SimpleNamespace(restore_setting=object())
+
+    class FakeSerial:
+        def reset_input_buffer(self):
+            calls.append("clear")
+
+    def fake_restore(_ser, _setting):
+        calls.append("restore")
+        return True
+
+    monkeypatch.setattr(utr_usb_sample, "restore_command_mode_antenna_setting", fake_restore)
+
+    utr_usb_sample.restore_antenna_setting_safely(FakeSerial(), selection)
+
+    output = capsys.readouterr().out
+    assert calls == ["clear", "restore"]
+    assert "復元前に受信バッファをクリアしました。" in output
+
+
+def test_restore_antenna_setting_safely_continues_when_buffer_clear_fails(monkeypatch, capsys):
+    calls = []
+    selection = SimpleNamespace(restore_setting=object())
+
+    class FakeSerial:
+        def reset_input_buffer(self):
+            calls.append("clear")
+            raise RuntimeError("buffer clear failed")
+
+    def fake_restore(_ser, _setting):
+        calls.append("restore")
+        return True
+
+    monkeypatch.setattr(utr_usb_sample, "restore_command_mode_antenna_setting", fake_restore)
+
+    utr_usb_sample.restore_antenna_setting_safely(FakeSerial(), selection)
+
+    output = capsys.readouterr().out
+    assert calls == ["clear", "restore"]
+    assert "復元前の受信バッファクリアに失敗しました。復元処理は継続します。" in output
+
+
 def test_finish_inventory_session_restores_saves_and_closes(monkeypatch):
     calls = []
     ser = SimpleNamespace(is_open=True)
