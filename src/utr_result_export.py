@@ -86,10 +86,54 @@ def _summary_rows(summary: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
+def _legacy_csv_path(path: Path) -> Path:
+    """Return a non-existing backup path for a CSV with an old header."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    candidate = path.with_name(f"{path.stem}_legacy_{timestamp}{path.suffix}")
+    index = 1
+
+    while candidate.exists():
+        candidate = path.with_name(f"{path.stem}_legacy_{timestamp}_{index}{path.suffix}")
+        index += 1
+
+    return candidate
+
+
+def _read_csv_header(path: Path) -> list[str]:
+    """Read the first row of an existing CSV as a header."""
+    with path.open("r", newline="", encoding="utf-8-sig") as file:
+        reader = csv.reader(file)
+        try:
+            return next(reader)
+        except StopIteration:
+            return []
+
+
+def _prepare_csv_for_current_header(path: Path) -> bool:
+    """Prepare a CSV file and return whether a new header should be written."""
+    if not path.exists() or path.stat().st_size == 0:
+        return True
+
+    existing_header = _read_csv_header(path)
+    if existing_header == CSV_FIELDNAMES:
+        return False
+
+    legacy_path = _legacy_csv_path(path)
+    path.rename(legacy_path)
+
+    print(
+        "既存CSVのヘッダーが現在形式と異なるため、"
+        f"旧CSVを {legacy_path.name} に退避しました。"
+    )
+    print("新しいCSVヘッダーで保存を開始します。")
+
+    return True
+
+
 def save_results_to_csv(filename: str, summary: dict[str, Any]) -> None:
     """Append inventory summary rows to a UTF-8 BOM CSV file."""
     path = Path(filename)
-    write_header = not path.exists() or path.stat().st_size == 0
+    write_header = _prepare_csv_for_current_header(path)
 
     with path.open("a", newline="", encoding="utf-8-sig") as file:
         writer = csv.DictWriter(file, fieldnames=CSV_FIELDNAMES)
