@@ -14,3 +14,4 @@ pr_body.md
 inventory_results.txt
 inventory_results.csv
 inventory_results.json
+inventory_results_legacy_*.csv

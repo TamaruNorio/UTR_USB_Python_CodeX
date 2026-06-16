@@ -1037,7 +1037,7 @@ def drain_serial_input_until_quiet(
 
 
 def clear_serial_input_buffer_before_restore(ser: serial.Serial) -> None:
-    """???????????????????????????????????"""
+    """復元コマンド送信前に、遅延して残った受信データを可能な限り読み捨てます。"""
     reset_input_buffer = getattr(ser, "reset_input_buffer", None)
     if not callable(reset_input_buffer):
         return
@@ -1121,6 +1121,25 @@ def save_inventory_results(
 def should_save_inventory_results(total_iterations: int) -> bool:
     """Inventoryを1回以上実行した場合だけ集計結果を保存します。"""
     return total_iterations > 0
+
+
+def format_pc_uii_for_display(pc_uii_hex: str, mask: bool = False) -> str:
+    """PC+UIIの画面表示用文字列を返します。
+
+    Args:
+        pc_uii_hex: PC+UIIを16進文字列にした値。
+        mask: Trueの場合、実タグIDを画面へ出さず「省略」と表示します。
+
+    Returns:
+        str: 画面表示に使うPC+UII文字列。
+
+    注意:
+        この関数は画面表示だけを制御します。集計キーや保存データは変更しません。
+        タグ別の読み取り回数を壊さないためです。
+    """
+    if mask:
+        return "省略"
+    return pc_uii_hex
 
 
 def close_serial_safely(ser: serial.Serial) -> None:
@@ -1476,6 +1495,9 @@ def main():
     inventory_result_item_dict = {}
     try:
         buzzer_enabled = ask_yes_no("読み取り結果をブザーで通知しますか？ [y/N]: ", default=False)
+        mask_pc_uii_display = ask_yes_no("PC+UIIを画面表示でマスクしますか？ [y/N]: ", default=False)
+        if mask_pc_uii_display:
+            print("PC+UIIは画面表示のみ省略します。集計キーと結果ファイルには実値を保持します。")
 
         while True:
             try:
@@ -1541,7 +1563,7 @@ def main():
 
                         for pc_uii, rssi_value in zip(pc_uii_list, rssi_list):
                             pc_uii_hex = pc_uii.hex().upper() # PC+UIIを16進数文字列に変換
-                            print(f"PC+UII: {pc_uii_hex}")
+                            print(f"PC+UII: {format_pc_uii_for_display(pc_uii_hex, mask=mask_pc_uii_display)}")
                             print(f"RSSI: {rssi_value:.1f} dBm")
                             pc_uii_count_dict[pc_uii_hex] = pc_uii_count_dict.get(pc_uii_hex, 0) + 1 # カウントを更新
                             antenna_number = inventory_target.number if inventory_target is not None else None
