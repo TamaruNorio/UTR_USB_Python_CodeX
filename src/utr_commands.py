@@ -12,7 +12,12 @@
 - COMポート選択、ユーザー入力、画面表示は行いません。
 """
 
-from src.utr_protocol import CR, ETX, STX, calculate_sum_value
+try:
+    from src.utr_protocol import CR, ETX, STX, calculate_sum_value
+except ModuleNotFoundError:
+    # `py .\utr_usb_sample.py` を src フォルダ内から直接実行した場合でも、
+    # utr_commands.py が読み込めるようにするための互換処理です。
+    from utr_protocol import CR, ETX, STX, calculate_sum_value
 
 
 # src/utr_usb_sample.py の COMMANDS を安全に複製した固定コマンドです。
@@ -29,6 +34,13 @@ COMMANDS: dict[str, bytes] = {
     "UHF_BUZZER_pipipi": bytes([0x02, 0x00, 0x42, 0x02, 0x01, 0x01, 0x03, 0x4B, 0x0D]),
     "UHF_WRITE": bytes([0x02, 0x00, 0x55, 0x08, 0x16, 0x01, 0x00, 0x00, 0x00, 0x02, 0x04, 0x56, 0x03, 0xD5, 0x0D]),
 }
+
+# ブザー音種別の定数です。
+# 数値の意味をコード中に直接書くと、あとから見た人が判断しにくくなるため、
+# タグあり、タグなし、NACK用を名前付き定数として扱います。
+BUZZER_SOUND_PI = 0x00       # タグ未検出時に使う既存の「ピー」音
+BUZZER_SOUND_PIPIPI = 0x01   # タグ検出時に使う既存の「ピッピッピ」音
+BUZZER_SOUND_NACK = 0x02     # NACK時に使う候補音。実音は実機確認で確認します。
 
 
 def get_command(command_name: str) -> bytes:
