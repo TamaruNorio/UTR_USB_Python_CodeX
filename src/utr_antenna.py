@@ -42,6 +42,7 @@ CR = 0x0D
 
 DETAIL_ROM_VERSION_READ = 0x90
 DETAIL_ANTENNA_SWITCHING_SETTING_READ = 0x43
+DETAIL_ANTENNA_SWITCHING_SETTING_WRITE = 0x33
 DETAIL_CHECK_ANTENNA = 0x44
 
 CHECK_STATUS_OK = 0x00
@@ -352,6 +353,32 @@ def parse_antenna_switching_setting_response(frame: bytes) -> AntennaSwitchingSe
     data = _validate_ack_frame(
         frame=frame,
         expected_detail=DETAIL_ANTENNA_SWITCHING_SETTING_READ,
+        expected_data_length=8,
+    )
+
+    return AntennaSwitchingSetting(
+        parameter_kind=data[2],
+        switching_mode=data[3] & 0x03,
+        antenna_id_output_enabled=bool(data[3] & 0x80),
+        antenna_mask=data[4],
+        reserved=data[5:8],
+        raw=frame,
+    )
+
+
+def parse_antenna_switching_setting_write_response(frame: bytes) -> AntennaSwitchingSetting:
+    """アンテナ切替設定の書き込みACKレスポンスを解析します。
+
+    想定DATA部:
+        33 00 parameter_kind flags antenna_mask 00 00 00
+
+    注意:
+        PR-17ではコマンドモード用パラメータへの一時変更だけに使います。
+        FLASH書き込みには使いません。
+    """
+    data = _validate_ack_frame(
+        frame=frame,
+        expected_detail=DETAIL_ANTENNA_SWITCHING_SETTING_WRITE,
         expected_data_length=8,
     )
 
