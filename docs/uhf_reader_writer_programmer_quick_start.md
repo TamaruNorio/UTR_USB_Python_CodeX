@@ -1,10 +1,9 @@
-# Field Support Quick Start
+# UHFリーダライタ開発者向け Quick Start
 
 ## このドキュメントの対象者
 
 このドキュメントは、次の人が UTR-S201/202 系リーダライタを USB 接続で確認するときの入口です。
 
-- フィールドサポート担当者
 - Python 初心者
 - UTR-S201/202 を USB 接続で確認したい人
 - UTR-SUN02-4CH のアンテナ接続確認やANT別読み取り確認をしたい人
