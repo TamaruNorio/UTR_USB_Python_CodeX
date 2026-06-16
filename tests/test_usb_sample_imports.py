@@ -244,3 +244,11 @@ def test_drain_serial_input_until_quiet_discards_available_bytes():
 
     assert drained == 3
     assert calls == [3]
+
+
+def test_format_pc_uii_for_display_returns_raw_when_not_masked():
+    assert utr_usb_sample.format_pc_uii_for_display("E28011ABCDEF", mask=False) == "E28011ABCDEF"
+
+
+def test_format_pc_uii_for_display_masks_when_requested():
+    assert utr_usb_sample.format_pc_uii_for_display("E28011ABCDEF", mask=True) == "省略"
