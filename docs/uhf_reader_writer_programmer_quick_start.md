@@ -41,6 +41,7 @@ UTRRWManager で接続、ROM バージョン確認、タグ読み取りなどの
 - 顧客情報、実シリアル番号、実タグ ID、未マスクの実測ログは記録や共有時に混入させないでください。
 - Inventory結果は `inventory_results.txt`、`inventory_results.csv`、`inventory_results.json` に保存されます。
 - CSVはExcelでの確認向け、JSONは後続処理や比較用です。
+- 複数アンテナ順次Inventoryでは、CSV/JSONにアンテナ番号、ラベル、説明も保存されます。
 - 実測PC/UIIやログを公開する場合は、必ずマスクしてください。
 - 読み取り前にブザー通知のON/OFFを選べます。ONの場合、タグありはピッピッピ、タグなしはピーで通知します。
 - `q` で読み取りを終了しても、終了ブザーは鳴りません。
