@@ -71,12 +71,12 @@ from   serial.tools import list_ports
 from   typing       import List, Optional, Tuple
 try:
     from src.utr_inventory import format_inventory_param_response, parse_inventory_param_response
-    from src.utr_protocol import parse_output_power_dbm
+    from src.utr_protocol import format_nack_message, parse_output_power_dbm
     from src.utr_result_export import build_result_summary, save_results_to_csv, save_results_to_json
     from src.utr_serial_ports import format_port_info, find_port_by_user_input, is_quit_input
 except ModuleNotFoundError:
     from utr_inventory import format_inventory_param_response, parse_inventory_param_response
-    from utr_protocol import parse_output_power_dbm
+    from utr_protocol import format_nack_message, parse_output_power_dbm
     from utr_result_export import build_result_summary, save_results_to_csv, save_results_to_json
     from utr_serial_ports import format_port_info, find_port_by_user_input, is_quit_input
 
@@ -363,7 +363,7 @@ def received_data_parse(data: bytes) -> Tuple[List[bytes], List[float], Optional
 
                     elif command == NACK:
                         # コマンドがNACK (0x31) なら、NACKの応答として処理
-                        print(parse_nack_response(data_frame)) # NACKエラーメッセージを表示
+                        print_nack_message(data_frame) # NACKエラーメッセージを表示
 
                 else:
                     print("サム値が正しくありません（途中までの結果を返します）")
@@ -396,37 +396,10 @@ def received_data_parse(data: bytes) -> Tuple[List[bytes], List[float], Optional
 
 
 # NACK応答時のエラー解析(初歩、一例) 全部は網羅してません。
-def parse_nack_response(nack_response: bytes) -> str:
-    """
-    NACK応答フレームのエラーコードを解析し、対応するエラーメッセージを返す。
-
-    Args:
-        nack_response (bytes): 受信したNACK応答フレーム。
-
-    Returns:
-        str: エラーメッセージ。
-    """
-    if len(nack_response) < (HEADER_LENGTH + FOOTER_LENGTH):
-        return "Invalid NACK response" # NACK応答フレームが短すぎる場合
-
-    # エラーコードを取得 (通常はフレームの6バイト目、インデックス5)
-    error_code = nack_response[5]
-
-    error_messages = {
-        0x01: "CMD_CRC_ERROR: データのCRCが一致しない",
-        0x02: "CMD_TIME_OVER: データが途中で途切れた",
-        0x03: "CMD_RX_ERROR: アンチコリジョン処理中にエラー",
-        0x04: "CMD_RXBUSY_ERROR: RFタグからの応答がない",
-        0x07: "CMD_ERROR: コマンド実行中にリーダライタ内部でエラー",
-        0x0A: "CMD_UHF_IC_ERROR: RFタグアクセス時の内蔵チップエラー",
-        0x60: "CMD_LBT_ERROR: キャリアセンス時のタイムアウトエラー",
-        0x64: "HARDWARE_ERROR: ハードウェア内部で異常が発生",
-        0x68: "CMD_ANT_ERROR: アンテナ断線検知エラー",
-        0x42: "SUM_ERROR: 上位機器から送信されたコマンドのSUM値が正しくない",
-        0x44: "FORMAT_ERROR: 上位機器から送信されたコマンドのフォーマットまたはパラメータが正しくない",
-    }
-
-    return error_messages.get(error_code, f"Unknown NACK error (0x{error_code:02X})")
+def print_nack_message(nack_response: bytes) -> None:
+    """NACK応答を現場確認向けの複数行で表示する。"""
+    for line in format_nack_message(nack_response):
+        print(line)
 
 
 # SUM値計算
@@ -597,7 +570,7 @@ def play_buzzer_for_inventory_result(ser: serial.Serial, has_tag: bool) -> None:
         else:
             print("タグ未検出のため、ブザー通知を実行しました（ピー）")
     elif re.match(STX + b'.' + NACK, buzzer_response):
-        print(parse_nack_response(buzzer_response))
+        print_nack_message(buzzer_response)
     else:
         print("ブザー制御 ACK/NACK なし")
 
@@ -651,7 +624,7 @@ def main():
     # 応答がNACKの場合
     elif re.match(STX + b'.' + NACK, result):
         if bytes([result[DETAIL_LOCATION]]) == DETAIL_ROM:
-            print(parse_nack_response(result))
+            print_nack_message(result)
     # その他の応答の場合
     else:
         print("USB通信: NG（ACK/NACK なし）")
@@ -664,7 +637,7 @@ def main():
     if re.match(STX + b'.' + ACK, result):
         print("コマンドモードに切り替えました")
     elif re.match(STX + b'.' + NACK, result):
-        print(parse_nack_response(result))
+        print_nack_message(result)
     else:
         print("コマンドモード切替に失敗しました")
         ser.close()
@@ -679,7 +652,7 @@ def main():
         output_power_level = parse_output_power_dbm(result[7:9])
         print("送信出力値：", output_power_level, "dBm")
     elif re.match(STX + b'.' + NACK, result):
-        print(parse_nack_response(result))
+        print_nack_message(result)
     else:
         print("通信エラー（UHF_READ_OUTPUT_POWER）")
         print(result.hex())
@@ -695,7 +668,7 @@ def main():
         if 1 <= output_ch <= len(OUTPUT_CH_FREQ_LIST):
             print("送信周波数：", OUTPUT_CH_FREQ_LIST[output_ch-1], " MHz")
     elif re.match(STX + b'.' + NACK, result):
-        print(parse_nack_response(result))
+        print_nack_message(result)
     else:
         print("通信エラー（UHF_READ_FREQ_CH）")
         print(result.hex())
@@ -708,7 +681,7 @@ def main():
     if re.match(STX + b'.' + ACK, result):
         print("UHF_GET_INVENTORY_PARAM が正常に実行されました")
     elif re.match(STX + b'.' + NACK, result):
-        print(parse_nack_response(result))
+        print_nack_message(result)
     else:
         print("UHF_GET_INVENTORY_PARAM 実行エラー")
         print(result.hex())
