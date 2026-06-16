@@ -41,3 +41,39 @@ def test_select_buzzer_command_for_detected_tag_uses_pipipi():
 
 def test_select_buzzer_command_for_no_tag_uses_pi():
     assert sample.select_buzzer_command_for_inventory_result(False) == sample.COMMANDS["UHF_BUZZER_pi"]
+
+def test_select_buzzer_command_for_nack_uses_generated_nack_sound():
+    # NACK時はタグ有無よりもNACKを優先し、sound_type=0x02 のブザーコマンドを使う。
+    expected = sample.build_buzzer_command(
+        response_required=True,
+        sound_type=sample.BUZZER_SOUND_NACK,
+    )
+
+    assert sample.select_buzzer_command_for_inventory_result(False, has_nack=True) == expected
+    assert sample.select_buzzer_command_for_inventory_result(True, has_nack=True) == expected
+
+
+def test_get_buzzer_success_message_distinguishes_nack_from_no_tag():
+    # 画面表示でも、NACKとタグ未検出を混同しないようにする。
+    assert "NACK応答" in sample.get_buzzer_success_message(has_tag=False, has_nack=True)
+    assert "NACK用ブザー" in sample.get_buzzer_success_message(has_tag=False, has_nack=True)
+    assert "タグ未検出" in sample.get_buzzer_success_message(has_tag=False, has_nack=False)
+    assert "ピッピッピ" in sample.get_buzzer_success_message(has_tag=True, has_nack=False)
+
+
+def test_received_data_contains_nack_detects_antenna_error_frame():
+    # 実機確認で得られたNACK応答と同じ形式のテストデータ。
+    # 顧客情報や実測PC/UIIではなく、NACK制御フレームのみを使う。
+    nack_frame = bytes.fromhex("0200310A1068000000000000000003B80D")
+
+    assert sample.received_data_contains_nack(nack_frame) is True
+
+
+def test_received_data_contains_nack_returns_false_without_nack():
+    # NACKを含まない既存のブザーコマンドではFalseになる。
+    assert sample.received_data_contains_nack(sample.COMMANDS["UHF_BUZZER_pi"]) is False
+
+
+def test_should_stop_inventory_repeat_only_when_nack():
+    assert sample.should_stop_inventory_repeat(True) is True
+    assert sample.should_stop_inventory_repeat(False) is False

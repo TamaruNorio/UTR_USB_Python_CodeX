@@ -74,11 +74,13 @@ try:
     from src.utr_protocol import format_nack_message, parse_output_power_dbm
     from src.utr_result_export import build_result_summary, save_results_to_csv, save_results_to_json
     from src.utr_serial_ports import format_port_info, find_port_by_user_input, is_quit_input
+    from src.utr_commands import BUZZER_SOUND_NACK, build_buzzer_command
 except ModuleNotFoundError:
     from utr_inventory import format_inventory_param_response, parse_inventory_param_response
     from utr_protocol import format_nack_message, parse_output_power_dbm
     from utr_result_export import build_result_summary, save_results_to_csv, save_results_to_json
     from utr_serial_ports import format_port_info, find_port_by_user_input, is_quit_input
+    from utr_commands import BUZZER_SOUND_NACK, build_buzzer_command
 
 
 # UTR用 シリアル送信コマンドの定義
@@ -563,21 +565,107 @@ def ask_yes_no(prompt: str, default: bool = False) -> bool:
         print("無効な入力です。y または n を入力してください。")
 
 
-def select_buzzer_command_for_inventory_result(has_tag: bool) -> bytes:
-    """Return the buzzer command for an inventory result."""
+def received_data_contains_nack(data: bytes) -> bool:
+    """受信データの中にNACK応答が含まれるか確認します。
+
+    Args:
+        data (bytes): communicate() から返された受信データ。
+
+    Returns:
+        bool: NACKフレームが1つでも含まれていれば True、なければ False。
+
+    補足:
+        RFIDリーダライタからNACK応答が返った場合は、タグ未検出とは別扱いにします。
+        アンテナ未接続などの異常を「タグがないだけ」と誤解しないようにするためです。
+    """
+    index = 0
+    while index < len(data):
+        if data[index] != STX[0]:
+            index += 1
+            continue
+
+        data_frame, next_index = parse_data_frame(data, index)
+        if data_frame is None:
+            # 不完全なフレームはNACKとは判断しません。
+            # ここで止めずに1バイト進めることで、後続データの確認を続けます。
+            index += 1
+            continue
+
+        if verify_sum_value(data_frame) and data_frame[CMD_LOCATION] == NACK[0]:
+            return True
+
+        index = next_index
+
+    return False
+
+
+def select_buzzer_command_for_inventory_result(has_tag: bool, has_nack: bool = False) -> bytes:
+    """Inventory結果に応じたブザーコマンドを返します。
+
+    Args:
+        has_tag (bool): タグを1枚以上読み取った場合は True。
+        has_nack (bool): NACK応答を受信した場合は True。
+
+    Returns:
+        bytes: RFIDリーダライタへ送信するブザー制御コマンド。
+
+    補足:
+        NACKはタグ未検出より優先します。
+        これは、アンテナ未接続などの異常を「タグが無いだけ」と誤認しないためです。
+    """
+    if has_nack:
+        # NACK用ブザーは未知の固定バイト列を手書きせず、
+        # 既存のフレーム生成関数でSUMまで計算して作ります。
+        return build_buzzer_command(response_required=True, sound_type=BUZZER_SOUND_NACK)
+
     if has_tag:
         return COMMANDS['UHF_BUZZER_pipipi']
+
     return COMMANDS['UHF_BUZZER_pi']
 
 
-def play_buzzer_for_inventory_result(ser: serial.Serial, has_tag: bool) -> None:
-    """Play a buzzer notification for one inventory result."""
-    buzzer_response = communicate(ser, select_buzzer_command_for_inventory_result(has_tag))
+def get_buzzer_success_message(has_tag: bool, has_nack: bool = False) -> str:
+    """ブザー制御ACK受信時に表示する日本語メッセージを返します。"""
+    if has_nack:
+        return "NACK応答のため、ブザー通知を実行しました（NACK用ブザー: sound_type=0x02）"
+    if has_tag:
+        return "タグを検出したため、ブザー通知を実行しました（ピッピッピ）"
+    return "タグ未検出のため、ブザー通知を実行しました（ピー）"
+
+
+def should_stop_inventory_repeat(has_nack: bool) -> bool:
+    """指定回数読み取りの途中で中断すべきかを返します。
+
+    Args:
+        has_nack (bool): 今回のInventory応答にNACKが含まれているか。
+
+    Returns:
+        bool: NACK時は True。呼び出し元は残りの繰り返し読み取りを中断します。
+
+    補足:
+        NACKは通信・接続条件の異常を示す可能性があるため、
+        同じ条件で何度もInventoryを続けず、最初のNACKで止めます。
+    """
+    return has_nack
+
+
+def play_buzzer_for_inventory_result(ser: serial.Serial, has_tag: bool, has_nack: bool = False) -> None:
+    """Inventory結果に応じてブザー通知を実行します。
+
+    Args:
+        ser (serial.Serial): 接続済みのシリアル通信オブジェクト。
+        has_tag (bool): タグを1枚以上読み取った場合は True。
+        has_nack (bool): NACK応答を受信した場合は True。
+
+    補足:
+        NACK時はタグ未検出音ではなく、NACK用ブザー候補音を使用します。
+        ただし sound_type=0x02 の実音は、実機で確認します。
+    """
+    buzzer_command = select_buzzer_command_for_inventory_result(has_tag=has_tag, has_nack=has_nack)
+    buzzer_response = communicate(ser, buzzer_command)
+
     if re.match(STX + b'.' + ACK, buzzer_response):
-        if has_tag:
-            print("タグを検出したため、ブザー通知を実行しました（ピッピッピ）")
-        else:
-            print("タグ未検出のため、ブザー通知を実行しました（ピー）")
+        print(get_buzzer_success_message(has_tag=has_tag, has_nack=has_nack))
     elif re.match(STX + b'.' + NACK, buzzer_response):
         print_nack_message(buzzer_response)
     else:
@@ -726,9 +814,16 @@ def main():
 
         start_time = time.time()
         for _ in range(repeat_count):
-            # UHFインベントリコマンドを送信
+            # UHFインベントリコマンドを送信します。
+            # NACKが返った場合は、アンテナ未接続などの異常が疑われるため、
+            # 残りの繰り返し読み取りを続けず、このforループを抜けます。
             result = communicate(ser, COMMANDS['UHF_INVENTORY'])
             if result:
+                # NACK有無は、ブザー選択と繰り返し中断の判断に使います。
+                # received_data_parse() はNACK内容を表示しますが、戻り値にはNACK有無を含めないため、
+                # ここで別途、受信フレーム内のNACKを確認します。
+                has_nack = received_data_contains_nack(result)
+
                 # 受信データを解析し、PC+UIIリスト、RSSIリスト、期待される読み取り数を取得
                 pc_uii_list, rssi_list, expected_count, read_channel = received_data_parse(result)
                 if expected_count is not None:
@@ -741,13 +836,23 @@ def main():
                     print(f"PC+UII: {pc_uii_hex}")
                     print(f"RSSI: {rssi_value:.1f} dBm")
                     pc_uii_count_dict[pc_uii_hex] = pc_uii_count_dict.get(pc_uii_hex, 0) + 1 # カウントを更新
+
                 total_read_count += len(pc_uii_list)
+
                 if buzzer_enabled:
-                    play_buzzer_for_inventory_result(ser, has_tag=len(pc_uii_list) > 0)
+                    play_buzzer_for_inventory_result(
+                        ser,
+                        has_tag=len(pc_uii_list) > 0,
+                        has_nack=has_nack,
+                    )
+
+                if should_stop_inventory_repeat(has_nack):
+                    print("NACK応答を受信したため、指定回数の残り読み取りを中断します。")
+                    break
             else:
                 print("インベントリ応答がありませんでした。")
                 if buzzer_enabled:
-                    play_buzzer_for_inventory_result(ser, has_tag=False)
+                    play_buzzer_for_inventory_result(ser, has_tag=False, has_nack=False)
 
         end_time = time.time()
         total_read_time += (end_time - start_time)
