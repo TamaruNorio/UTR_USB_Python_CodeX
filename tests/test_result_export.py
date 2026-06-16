@@ -14,7 +14,13 @@ def test_build_result_summary_calculates_average_read_count():
     )
 
     assert summary["average_read_count"] == 2.5
-    assert summary["items"] == [{"pc_uii": "E28011xxxxxxxxxxxxxx", "read_count": 10}]
+    assert summary["items"] == [{
+        "antenna_number": None,
+        "antenna_label": None,
+        "antenna_description": None,
+        "pc_uii": "E28011xxxxxxxxxxxxxx",
+        "read_count": 10,
+    }]
 
 
 def test_build_result_summary_uses_zero_average_when_iterations_are_zero():
@@ -72,6 +78,65 @@ def test_save_results_to_csv_writes_pc_uii_and_read_count(tmp_path):
         rows = list(csv.DictReader(file))
     assert rows[0]["pc_uii"] == "E28011xxxxxxxxxxxxxx"
     assert rows[0]["read_count"] == "2"
+
+
+def test_build_result_summary_accepts_antenna_items():
+    items = [{
+        "antenna_number": 0,
+        "antenna_label": "ANT0",
+        "antenna_description": "内蔵アンテナ",
+        "pc_uii": "E28011xxxxxxxxxxxxxx",
+        "read_count": 2,
+    }]
+
+    summary = result_export.build_result_summary(1, 0.5, 2, {"E28011xxxxxxxxxxxxxx": 2}, "2026-06-15T12:00:00", items=items)
+
+    assert summary["items"] == items
+
+
+def test_save_results_to_csv_writes_antenna_columns(tmp_path):
+    path = tmp_path / "inventory_results.csv"
+    items = [{
+        "antenna_number": 1,
+        "antenna_label": "ANT1",
+        "antenna_description": "外付けアンテナ1",
+        "pc_uii": "E28011xxxxxxxxxxxxxx",
+        "read_count": 1,
+    }]
+    summary = result_export.build_result_summary(1, 0.5, 1, {"E28011xxxxxxxxxxxxxx": 1}, "2026-06-15T12:00:00", items=items)
+
+    result_export.save_results_to_csv(str(path), summary)
+
+    with path.open("r", encoding="utf-8-sig", newline="") as file:
+        rows = list(csv.DictReader(file))
+    assert rows[0]["antenna_number"] == "1"
+    assert rows[0]["antenna_label"] == "ANT1"
+    assert rows[0]["antenna_description"] == "外付けアンテナ1"
+
+
+def test_save_results_to_csv_uses_blank_antenna_columns_when_unknown(tmp_path):
+    path = tmp_path / "inventory_results.csv"
+    summary = result_export.build_result_summary(1, 0.5, 1, {"E28011xxxxxxxxxxxxxx": 1}, "2026-06-15T12:00:00")
+
+    result_export.save_results_to_csv(str(path), summary)
+
+    with path.open("r", encoding="utf-8-sig", newline="") as file:
+        rows = list(csv.DictReader(file))
+    assert rows[0]["antenna_number"] == ""
+    assert rows[0]["antenna_label"] == ""
+    assert rows[0]["antenna_description"] == ""
+
+
+def test_save_results_to_json_writes_null_antenna_values_when_unknown(tmp_path):
+    path = tmp_path / "inventory_results.json"
+    summary = result_export.build_result_summary(1, 0.5, 1, {"E28011xxxxxxxxxxxxxx": 1}, "2026-06-15T12:00:00")
+
+    result_export.save_results_to_json(str(path), summary)
+
+    item = json.loads(path.read_text(encoding="utf-8"))[0]["items"][0]
+    assert item["antenna_number"] is None
+    assert item["antenna_label"] is None
+    assert item["antenna_description"] is None
 
 
 def test_save_results_to_csv_does_not_duplicate_header(tmp_path):

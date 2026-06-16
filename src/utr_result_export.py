@@ -13,6 +13,9 @@ CSV_FIELDNAMES = [
     "total_read_time_seconds",
     "total_read_count",
     "average_read_count",
+    "antenna_number",
+    "antenna_label",
+    "antenna_description",
     "pc_uii",
     "read_count",
 ]
@@ -24,16 +27,24 @@ def build_result_summary(
     total_read_count: int,
     pc_uii_count_dict: dict[str, int],
     saved_at: str | None = None,
+    items: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build a serializable summary of inventory results."""
     average_read_count = 0.0
     if total_iterations:
         average_read_count = total_read_count / total_iterations
 
-    items = [
-        {"pc_uii": pc_uii, "read_count": read_count}
-        for pc_uii, read_count in sorted(pc_uii_count_dict.items())
-    ]
+    if items is None:
+        items = [
+            {
+                "antenna_number": None,
+                "antenna_label": None,
+                "antenna_description": None,
+                "pc_uii": pc_uii,
+                "read_count": read_count,
+            }
+            for pc_uii, read_count in sorted(pc_uii_count_dict.items())
+        ]
 
     return {
         "saved_at": saved_at or datetime.now().isoformat(timespec="seconds"),
@@ -53,12 +64,21 @@ def _summary_rows(summary: dict[str, Any]) -> list[dict[str, Any]]:
         "total_read_count": summary["total_read_count"],
         "average_read_count": summary["average_read_count"],
     }
-    items = summary.get("items") or [{"pc_uii": "", "read_count": 0}]
+    items = summary.get("items") or [{
+        "antenna_number": None,
+        "antenna_label": None,
+        "antenna_description": None,
+        "pc_uii": "",
+        "read_count": 0,
+    }]
     rows = []
     for item in items:
         rows.append(
             {
                 **base,
+                "antenna_number": "" if item.get("antenna_number") is None else item["antenna_number"],
+                "antenna_label": item.get("antenna_label") or "",
+                "antenna_description": item.get("antenna_description") or "",
                 "pc_uii": item["pc_uii"],
                 "read_count": item["read_count"],
             }

@@ -1313,6 +1313,7 @@ def main():
     total_read_count  = 0   # 総読み取りタグ数
     total_iterations  = 0   # 総繰り返し回数
     pc_uii_count_dict = {}  # PC+UIIごとの読み取り回数を格納する辞書
+    inventory_result_item_dict = {}
     buzzer_enabled = ask_yes_no("読み取り結果をブザーで通知しますか？ [y/N]: ", default=False)
 
     while True:
@@ -1382,6 +1383,19 @@ def main():
                         print(f"PC+UII: {pc_uii_hex}")
                         print(f"RSSI: {rssi_value:.1f} dBm")
                         pc_uii_count_dict[pc_uii_hex] = pc_uii_count_dict.get(pc_uii_hex, 0) + 1 # カウントを更新
+                        antenna_number = inventory_target.number if inventory_target is not None else None
+                        antenna_label = inventory_target.label if inventory_target is not None else None
+                        antenna_description = inventory_target.description if inventory_target is not None else None
+                        item_key = (pc_uii_hex, antenna_number, antenna_label, antenna_description)
+                        if item_key not in inventory_result_item_dict:
+                            inventory_result_item_dict[item_key] = {
+                                "antenna_number": antenna_number,
+                                "antenna_label": antenna_label,
+                                "antenna_description": antenna_description,
+                                "pc_uii": pc_uii_hex,
+                                "read_count": 0,
+                            }
+                        inventory_result_item_dict[item_key]["read_count"] += 1
 
                     total_read_count += len(pc_uii_list)
 
@@ -1417,7 +1431,13 @@ def main():
     # --- 集計結果の保存 ---
     save_results_to_file("inventory_results.txt", total_iterations, total_read_time, total_read_count, pc_uii_count_dict)
     print("集計結果を inventory_results.txt に保存しました。")
-    summary = build_result_summary(total_iterations, total_read_time, total_read_count, pc_uii_count_dict)
+    summary = build_result_summary(
+        total_iterations,
+        total_read_time,
+        total_read_count,
+        pc_uii_count_dict,
+        items=list(inventory_result_item_dict.values()),
+    )
     try:
         save_results_to_csv("inventory_results.csv", summary)
         print("集計結果を inventory_results.csv に保存しました。")
