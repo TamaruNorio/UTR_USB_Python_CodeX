@@ -1049,6 +1049,10 @@ def save_inventory_results(
     inventory_result_items: list[dict],
 ) -> None:
     """Inventory集計結果をTXT/CSV/JSONへ保存します。"""
+    if not should_save_inventory_results(total_iterations):
+        print("Inventoryが実行されていないため、集計結果は保存しません。")
+        return
+
     try:
         save_results_to_file(
             "inventory_results.txt",
@@ -1078,6 +1082,11 @@ def save_inventory_results(
         print("集計結果を inventory_results.json に保存しました。")
     except (OSError, ValueError, json.JSONDecodeError) as e:
         print(f"JSON保存エラー: {e}")
+
+
+def should_save_inventory_results(total_iterations: int) -> bool:
+    """Inventoryを1回以上実行した場合だけ集計結果を保存します。"""
+    return total_iterations > 0
 
 
 def close_serial_safely(ser: serial.Serial) -> None:

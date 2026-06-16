@@ -121,6 +121,37 @@ def test_restore_antenna_setting_safely_continues_when_buffer_clear_fails(monkey
     assert "復元前の受信バッファクリアに失敗しました。復元処理は継続します。" in output
 
 
+def test_should_save_inventory_results_requires_inventory_execution():
+    assert utr_usb_sample.should_save_inventory_results(0) is False
+    assert utr_usb_sample.should_save_inventory_results(1) is True
+
+
+def test_save_inventory_results_skips_when_inventory_not_run(monkeypatch, capsys):
+    calls = []
+
+    monkeypatch.setattr(utr_usb_sample, "save_results_to_file", lambda *args, **kwargs: calls.append("txt"))
+    monkeypatch.setattr(utr_usb_sample, "save_results_to_csv", lambda *args, **kwargs: calls.append("csv"))
+    monkeypatch.setattr(utr_usb_sample, "save_results_to_json", lambda *args, **kwargs: calls.append("json"))
+
+    utr_usb_sample.save_inventory_results(0, 0.0, 0, {}, [])
+
+    output = capsys.readouterr().out
+    assert calls == []
+    assert "Inventoryが実行されていないため、集計結果は保存しません。" in output
+
+
+def test_save_inventory_results_saves_when_inventory_run_with_zero_tags(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(utr_usb_sample, "save_results_to_file", lambda *args, **kwargs: calls.append("txt"))
+    monkeypatch.setattr(utr_usb_sample, "save_results_to_csv", lambda *args, **kwargs: calls.append("csv"))
+    monkeypatch.setattr(utr_usb_sample, "save_results_to_json", lambda *args, **kwargs: calls.append("json"))
+
+    utr_usb_sample.save_inventory_results(1, 0.5, 0, {}, [])
+
+    assert calls == ["txt", "csv", "json"]
+
+
 def test_finish_inventory_session_restores_saves_and_closes(monkeypatch):
     calls = []
     ser = SimpleNamespace(is_open=True)
