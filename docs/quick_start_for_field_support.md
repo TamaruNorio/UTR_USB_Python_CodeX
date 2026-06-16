@@ -41,6 +41,8 @@ UTRRWManager で接続、ROM バージョン確認、タグ読み取りなどの
 - Inventory結果は `inventory_results.txt`、`inventory_results.csv`、`inventory_results.json` に保存されます。
 - CSVはExcelでの確認向け、JSONは後続処理や比較用です。
 - 実測PC/UIIやログを公開する場合は、必ずマスクしてください。
+- 読み取り前にブザー通知のON/OFFを選べます。ONの場合、タグありはピッピッピ、タグなしはピーで通知します。
+- `q` で読み取りを終了しても、終了ブザーは鳴りません。
 
 ## よく使う確認
 
