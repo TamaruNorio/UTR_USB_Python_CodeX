@@ -80,6 +80,14 @@ UTRRWManager で接続、ROM バージョン確認、タグ読み取りなどの
 - コマンドモードが必要な操作では、先に `COMMAND_MODE_SET` の応答を確認する。
 - 送信しているコマンドが設定変更系でないか、手順上必要なものか確認する。
 
+### NACK が返る
+
+- NACK表示に出る確認ポイントを最初に見る。
+- UTRRWManagerで同じ接続条件、同じタグ条件を確認する。
+- アンテナ接続、タグ距離、タグ向き、送信出力を確認する。
+- Access Password、対象メモリバンク、メモリロック状態を確認する。
+- Raw hex を共有する場合は、実測PC/UIIや顧客情報が含まれないようにマスクする。
+
 ### タグが読めない
 
 - アンテナ接続を確認する。
@@ -116,3 +124,4 @@ UTRRWManager で接続、ROM バージョン確認、タグ読み取りなどの
 - [UHF Inventory 応答解析メモ](uhf_inventory_response_parsing.md)
 - [RSSI 検証計画](rssi_validation_plan.md)
 - [UTRRWManager 比較テンプレート](utr_rw_manager_comparison_template.md)
+- [UHF Gen2 NACK エラー対応メモ](nack_error_handling.md)
