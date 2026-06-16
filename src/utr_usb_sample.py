@@ -64,6 +64,7 @@ import time
 import datetime
 import re
 import json
+from dataclasses import dataclass
 
 import serial
 from   serial.tools import list_ports
@@ -615,6 +616,22 @@ def ask_yes_no(prompt: str, default: bool = False) -> bool:
         print("無効な入力です。y または n を入力してください。")
 
 
+@dataclass(frozen=True)
+class InventoryAntennaSelection:
+    """Inventoryで使用するアンテナ選択結果。
+
+    restore_setting:
+        プログラム終了時に復元する、変更前のコマンドモード用アンテナ設定。
+
+    selected_targets:
+        Inventoryで順番に使用するアンテナ一覧。
+        例: [ANT0, ANT1] の場合、ANT0でInventoryしてからANT1でInventoryします。
+    """
+
+    restore_setting: AntennaSwitchingSetting
+    selected_targets: list[AntennaCheckTarget]
+
+
 def prompt_for_antenna_model_profile(identified_model_key: str | None = None) -> AntennaModelProfile:
     """アンテナ接続チェック対象の機種を選択します。
 
@@ -774,13 +791,77 @@ def filter_inventory_antenna_targets(
     return available_targets
 
 
-def prompt_for_inventory_antenna_target(
+def parse_inventory_antenna_selection_input(
     available_targets: list[AntennaCheckTarget],
-) -> Optional[AntennaCheckTarget]:
-    """Inventoryで使用するアンテナをユーザーに選択してもらいます。"""
+    value: str,
+) -> Optional[list[AntennaCheckTarget]]:
+    """Inventory対象アンテナの入力文字列を解析します。
+
+    対応入力:
+        q      : 選択中止
+        0      : ANT0だけ選択
+        1      : ANT1だけ選択
+        0,1    : ANT0、ANT1を順番に選択
+        all    : 候補アンテナをすべて選択
+
+    Returns:
+        list[AntennaCheckTarget] | None:
+            選択されたアンテナ一覧。
+            q の場合は None。
+
+    Raises:
+        ValueError:
+            候補にないアンテナ番号や不正な入力の場合。
+    """
+    normalized = value.strip().lower()
+    if is_quit_input(normalized):
+        return None
+
+    if normalized == "all":
+        return list(available_targets)
+
+    if normalized == "":
+        raise ValueError("空入力です。例: 0 / 1 / 0,1 / all")
+
+    target_by_number = {target.number: target for target in available_targets}
+    selected_targets: list[AntennaCheckTarget] = []
+    selected_numbers: set[int] = set()
+
+    for part in normalized.split(","):
+        part = part.strip()
+        if part == "":
+            raise ValueError("カンマの前後にアンテナ番号を入力してください。")
+
+        try:
+            selected_number = int(part)
+        except ValueError as exc:
+            raise ValueError("アンテナ番号は数値、または all で入力してください。") from exc
+
+        if selected_number not in target_by_number:
+            raise ValueError("候補に表示されているアンテナ番号を入力してください。")
+
+        # 同じ番号を重複入力した場合は1回だけ使います。
+        if selected_number not in selected_numbers:
+            selected_targets.append(target_by_number[selected_number])
+            selected_numbers.add(selected_number)
+
+    if not selected_targets:
+        raise ValueError("Inventoryに使用するアンテナが選択されていません。")
+
+    return selected_targets
+
+
+def prompt_for_inventory_antenna_targets(
+    available_targets: list[AntennaCheckTarget],
+) -> list[AntennaCheckTarget]:
+    """Inventoryで使用するアンテナをユーザーに選択してもらいます。
+
+    複数選択した場合は、同時指定ではなく順次切替でInventoryします。
+    例: 0,1 → ANT0でInventory → ANT1でInventory
+    """
     if not available_targets:
         print("Inventoryに使用できるアンテナがありません。アンテナ設定は変更しません。")
-        return None
+        return []
 
     print("")
     print("Inventoryに使用できるアンテナ候補:")
@@ -793,58 +874,61 @@ def prompt_for_inventory_antenna_target(
             f"接続OKのアンテナが1つだけのため、{target.label}をInventoryに使用しますか？ [Y/n]: ",
             default=True,
         ):
-            return target
+            return [target]
         print("アンテナ設定は変更しません。")
-        return None
+        return []
 
-    available_numbers = {target.number for target in available_targets}
+    print("複数選択できます。例: 0 / 1 / 0,1 / all")
+    print("複数選択時は、同時使用ではなく順番にアンテナを切り替えてInventoryします。")
+
     while True:
-        value = input("Inventoryに使用するアンテナ番号を入力してください（終了は'q'）: ").strip()
-        if is_quit_input(value):
-            print("アンテナ設定は変更しません。")
-            return None
+        value = input("Inventoryに使用するアンテナ番号を入力してください（例: 0,1 / all、終了は'q'）: ").strip()
 
         try:
-            selected_number = int(value)
-        except ValueError:
-            print("入力エラー: 表示されたアンテナ番号を入力してください。")
+            selected_targets = parse_inventory_antenna_selection_input(available_targets, value)
+        except ValueError as exc:
+            print(f"入力エラー: {exc}")
             continue
 
-        if selected_number in available_numbers:
-            for target in available_targets:
-                if target.number == selected_number:
-                    return target
+        if selected_targets is None:
+            print("アンテナ設定は変更しません。")
+            return []
 
-        print("入力エラー: 候補に表示されているアンテナ番号を入力してください。")
+        selected_text = ", ".join(target.label for target in selected_targets)
+        print(f"Inventory対象アンテナ: {selected_text}")
+        return selected_targets
 
 
 def write_command_mode_antenna_setting(
     ser: serial.Serial,
-    original_setting: AntennaSwitchingSetting,
+    current_setting: AntennaSwitchingSetting,
     target: AntennaCheckTarget,
-) -> bool:
+) -> Optional[AntennaSwitchingSetting]:
     """コマンドモード用アンテナ設定を一時変更します。
 
     Args:
         ser: 接続済みシリアルオブジェクト。
-        original_setting: 変更前のコマンドモード用アンテナ切替設定。
+        current_setting: 現在のコマンドモード用アンテナ切替設定。
+            順次切替では、直前に書き込んだアンテナ設定を渡します。
         target: Inventoryで使用したいアンテナ。
 
     Returns:
-        bool: 書き込みACKを受け取れた場合は True。
+        AntennaSwitchingSetting | None:
+            切替不要または書き込み成功の場合は、現在有効なアンテナ設定。
+            書き込み失敗の場合は None。
 
     注意:
         FLASHには書き込みません。コマンドモード用パラメータだけを一時変更します。
     """
     selected_mask = 1 << target.number
 
-    if original_setting.antenna_mask == selected_mask:
-        print(f"コマンドモード用アンテナ設定はすでに {target.label} です。変更しません。")
-        return False
+    if current_setting.antenna_mask == selected_mask:
+        print(f"コマンドモード用アンテナ設定はすでに {target.label} です。そのままInventoryに使用します。")
+        return current_setting
 
     print("")
     print("コマンドモード用アンテナ設定を一時変更します。")
-    print(f"変更前: {format_antenna_numbers(original_setting.enabled_antennas)}")
+    print(f"変更前: {format_antenna_numbers(current_setting.enabled_antennas)}")
     print(f"変更後: {target.label}（{target.description}）")
     print("FLASHは変更しません。")
 
@@ -852,8 +936,8 @@ def write_command_mode_antenna_setting(
         ser,
         build_write_antenna_switching_setting_command(
             parameter_kind=PARAMETER_KIND_COMMAND_MODE,
-            switching_mode=original_setting.switching_mode,
-            antenna_id_output_enabled=original_setting.antenna_id_output_enabled,
+            switching_mode=current_setting.switching_mode,
+            antenna_id_output_enabled=current_setting.antenna_id_output_enabled,
             antenna_mask=selected_mask,
         ),
     )
@@ -864,20 +948,20 @@ def write_command_mode_antenna_setting(
         except ValueError as exc:
             print(f"アンテナ切替設定書き込みレスポンスの解析に失敗しました: {exc}")
             print("Raw:", response.hex().upper())
-            return False
+            return None
 
         print("コマンドモード用アンテナ設定を一時変更しました。")
         for line in format_antenna_switching_setting(written_setting):
             print(line)
-        return True
+        return written_setting
 
     if re.match(STX + b'.' + NACK, response):
         print_nack_message(response)
-        return False
+        return None
 
     print("アンテナ切替設定の書き込みで ACK/NACK がありません。")
     print("Raw:", response.hex().upper())
-    return False
+    return None
 
 
 def restore_command_mode_antenna_setting(
@@ -913,13 +997,14 @@ def restore_command_mode_antenna_setting(
 def run_optional_antenna_check(
     ser: serial.Serial,
     rom_info: RomVersionInfo | None = None,
-) -> Optional[AntennaSwitchingSetting]:
+) -> Optional[InventoryAntennaSelection]:
     """必要に応じて、アンテナ設定表示と接続確認を行います。
 
     Returns:
-        AntennaSwitchingSetting | None:
-            コマンドモード用アンテナ設定を一時変更した場合は、復元用の変更前設定。
-            変更しなかった場合は None。
+        InventoryAntennaSelection | None:
+            Inventoryで使用するアンテナが選択された場合は、
+            復元用の変更前設定と選択アンテナ一覧を返します。
+            変更しない場合は None。
 
     ROMシリーズ名コードから仕様書上の機種が確定できる場合は、
     機種番号を手入力させず、その機種プロファイルを自動採用します。
@@ -973,18 +1058,14 @@ def run_optional_antenna_check(
         connected_targets=connected_targets,
         flash_setting=flash_setting,
     )
-    selected_target = prompt_for_inventory_antenna_target(available_targets)
-    if selected_target is None:
+    selected_targets = prompt_for_inventory_antenna_targets(available_targets)
+    if not selected_targets:
         return None
 
-    if write_command_mode_antenna_setting(
-        ser=ser,
-        original_setting=command_mode_setting,
-        target=selected_target,
-    ):
-        return command_mode_setting
-
-    return None
+    return InventoryAntennaSelection(
+        restore_setting=command_mode_setting,
+        selected_targets=selected_targets,
+    )
 
 
 def received_data_contains_nack(data: bytes) -> bool:
@@ -1225,7 +1306,7 @@ def main():
     # --- アンテナ設定表示・接続チェック（任意） ---
     # UHF_CheckAntennaは接続確認専用コマンドです。
     # ここではFLASHやRAMへの書き込みは行いません。
-    antenna_restore_setting = run_optional_antenna_check(ser, rom_info=rom_info)
+    antenna_selection = run_optional_antenna_check(ser, rom_info=rom_info)
 
     # --- 読み取りループ ---
     total_read_time   = 0.0 # 総読み取り時間
@@ -1246,49 +1327,82 @@ def main():
             print(f"入力エラー: {e}。再度入力してください。")
             continue
 
-        total_iterations += repeat_count
+        inventory_targets: list[AntennaCheckTarget | None] = [None]
+        current_antenna_setting: Optional[AntennaSwitchingSetting] = None
+
+        if antenna_selection is not None and antenna_selection.selected_targets:
+            inventory_targets = list(antenna_selection.selected_targets)
+            current_antenna_setting = antenna_selection.restore_setting
+
+        total_iterations += repeat_count * len(inventory_targets)
 
         start_time = time.time()
+        stop_current_request = False
+
         for _ in range(repeat_count):
-            # UHFインベントリコマンドを送信します。
-            # NACKが返った場合は、アンテナ未接続などの異常が疑われるため、
-            # 残りの繰り返し読み取りを続けず、このforループを抜けます。
-            result = communicate(ser, COMMANDS['UHF_INVENTORY'])
-            if result:
-                # NACK有無は、ブザー選択と繰り返し中断の判断に使います。
-                # received_data_parse() はNACK内容を表示しますが、戻り値にはNACK有無を含めないため、
-                # ここで別途、受信フレーム内のNACKを確認します。
-                has_nack = received_data_contains_nack(result)
+            for inventory_target in inventory_targets:
+                if inventory_target is not None:
+                    print("")
+                    print(f"--- Inventory対象: {inventory_target.label}（{inventory_target.description}） ---")
 
-                # 受信データを解析し、PC+UIIリスト、RSSIリスト、期待される読み取り数を取得
-                pc_uii_list, rssi_list, expected_count, read_channel = received_data_parse(result)
-                if expected_count is not None:
-                    print(f"読み取り完了レスポンス枚数: {expected_count} 枚")
-                if read_channel is not None:
-                    print(f"読み取りチャンネル: {read_channel} ch")
+                    if current_antenna_setting is None:
+                        print("現在のアンテナ設定が不明なため、このアンテナのInventoryをスキップします。")
+                        continue
 
-                for pc_uii, rssi_value in zip(pc_uii_list, rssi_list):
-                    pc_uii_hex = pc_uii.hex().upper() # PC+UIIを16進数文字列に変換
-                    print(f"PC+UII: {pc_uii_hex}")
-                    print(f"RSSI: {rssi_value:.1f} dBm")
-                    pc_uii_count_dict[pc_uii_hex] = pc_uii_count_dict.get(pc_uii_hex, 0) + 1 # カウントを更新
-
-                total_read_count += len(pc_uii_list)
-
-                if buzzer_enabled:
-                    play_buzzer_for_inventory_result(
-                        ser,
-                        has_tag=len(pc_uii_list) > 0,
-                        has_nack=has_nack,
+                    updated_setting = write_command_mode_antenna_setting(
+                        ser=ser,
+                        current_setting=current_antenna_setting,
+                        target=inventory_target,
                     )
+                    if updated_setting is None:
+                        print(f"{inventory_target.label}への切替に失敗したため、このアンテナのInventoryをスキップします。")
+                        continue
 
-                if should_stop_inventory_repeat(has_nack):
-                    print("NACK応答を受信したため、指定回数の残り読み取りを中断します。")
-                    break
-            else:
-                print("インベントリ応答がありませんでした。")
-                if buzzer_enabled:
-                    play_buzzer_for_inventory_result(ser, has_tag=False, has_nack=False)
+                    current_antenna_setting = updated_setting
+
+                # UHFインベントリコマンドを送信します。
+                # NACKが返った場合は、アンテナ未接続などの異常が疑われるため、
+                # 残りの繰り返し読み取りを続けず、この入力回のInventoryを中断します。
+                result = communicate(ser, COMMANDS['UHF_INVENTORY'])
+                if result:
+                    # NACK有無は、ブザー選択と繰り返し中断の判断に使います。
+                    # received_data_parse() はNACK内容を表示しますが、戻り値にはNACK有無を含めないため、
+                    # ここで別途、受信フレーム内のNACKを確認します。
+                    has_nack = received_data_contains_nack(result)
+
+                    # 受信データを解析し、PC+UIIリスト、RSSIリスト、期待される読み取り数を取得
+                    pc_uii_list, rssi_list, expected_count, read_channel = received_data_parse(result)
+                    if expected_count is not None:
+                        print(f"読み取り完了レスポンス枚数: {expected_count} 枚")
+                    if read_channel is not None:
+                        print(f"読み取りチャンネル: {read_channel} ch")
+
+                    for pc_uii, rssi_value in zip(pc_uii_list, rssi_list):
+                        pc_uii_hex = pc_uii.hex().upper() # PC+UIIを16進数文字列に変換
+                        print(f"PC+UII: {pc_uii_hex}")
+                        print(f"RSSI: {rssi_value:.1f} dBm")
+                        pc_uii_count_dict[pc_uii_hex] = pc_uii_count_dict.get(pc_uii_hex, 0) + 1 # カウントを更新
+
+                    total_read_count += len(pc_uii_list)
+
+                    if buzzer_enabled:
+                        play_buzzer_for_inventory_result(
+                            ser,
+                            has_tag=len(pc_uii_list) > 0,
+                            has_nack=has_nack,
+                        )
+
+                    if should_stop_inventory_repeat(has_nack):
+                        print("NACK応答を受信したため、指定回数の残り読み取りを中断します。")
+                        stop_current_request = True
+                        break
+                else:
+                    print("インベントリ応答がありませんでした。")
+                    if buzzer_enabled:
+                        play_buzzer_for_inventory_result(ser, has_tag=False, has_nack=False)
+
+            if stop_current_request:
+                break
 
         end_time = time.time()
         total_read_time += (end_time - start_time)
@@ -1297,8 +1411,8 @@ def main():
         print(f"現在の合計読み取り枚数: {total_read_count} 枚")
 
     # --- アンテナ設定の復元 ---
-    if antenna_restore_setting is not None:
-        restore_command_mode_antenna_setting(ser, antenna_restore_setting)
+    if antenna_selection is not None:
+        restore_command_mode_antenna_setting(ser, antenna_selection.restore_setting)
 
     # --- 集計結果の保存 ---
     save_results_to_file("inventory_results.txt", total_iterations, total_read_time, total_read_count, pc_uii_count_dict)
