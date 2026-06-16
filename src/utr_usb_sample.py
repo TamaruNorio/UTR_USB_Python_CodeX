@@ -967,7 +967,7 @@ def write_command_mode_antenna_setting(
 def restore_command_mode_antenna_setting(
     ser: serial.Serial,
     original_setting: AntennaSwitchingSetting,
-) -> None:
+) -> bool:
     """コマンドモード用アンテナ設定を元に戻します。"""
     print("")
     print("コマンドモード用アンテナ設定を元に戻します。")
@@ -986,12 +986,106 @@ def restore_command_mode_antenna_setting(
 
     if re.match(STX + b'.' + ACK, response):
         print("コマンドモード用アンテナ設定を元に戻しました。")
+        return True
     elif re.match(STX + b'.' + NACK, response):
         print("コマンドモード用アンテナ設定の復元でNACKを受信しました。")
         print_nack_message(response)
+        return False
     else:
         print("コマンドモード用アンテナ設定の復元で ACK/NACK がありません。")
         print("Raw:", response.hex().upper())
+        return False
+
+
+def restore_antenna_setting_safely(
+    ser: serial.Serial,
+    antenna_selection: Optional[InventoryAntennaSelection],
+) -> None:
+    """中断時でも可能な限りコマンドモード用アンテナ設定を復元します。"""
+    if antenna_selection is None:
+        return
+
+    try:
+        restored = restore_command_mode_antenna_setting(ser, antenna_selection.restore_setting)
+    except Exception as exc:
+        print("コマンドモード用アンテナ設定の復元に失敗しました。")
+        print("機器側の現在設定をUTRRWManagerまたは再実行時の読み取りで確認してください。")
+        print(f"復元エラー: {exc}")
+        return
+
+    if not restored:
+        print("コマンドモード用アンテナ設定の復元に失敗しました。")
+        print("機器側の現在設定をUTRRWManagerまたは再実行時の読み取りで確認してください。")
+
+
+def save_inventory_results(
+    total_iterations: int,
+    total_read_time: float,
+    total_read_count: int,
+    pc_uii_count_dict: dict,
+    inventory_result_items: list[dict],
+) -> None:
+    """Inventory集計結果をTXT/CSV/JSONへ保存します。"""
+    try:
+        save_results_to_file(
+            "inventory_results.txt",
+            total_iterations,
+            total_read_time,
+            total_read_count,
+            pc_uii_count_dict,
+        )
+        print("集計結果を inventory_results.txt に保存しました。")
+    except OSError as e:
+        print(f"TXT保存エラー: {e}")
+
+    summary = build_result_summary(
+        total_iterations,
+        total_read_time,
+        total_read_count,
+        pc_uii_count_dict,
+        items=inventory_result_items,
+    )
+    try:
+        save_results_to_csv("inventory_results.csv", summary)
+        print("集計結果を inventory_results.csv に保存しました。")
+    except OSError as e:
+        print(f"CSV保存エラー: {e}")
+    try:
+        save_results_to_json("inventory_results.json", summary)
+        print("集計結果を inventory_results.json に保存しました。")
+    except (OSError, ValueError, json.JSONDecodeError) as e:
+        print(f"JSON保存エラー: {e}")
+
+
+def close_serial_safely(ser: serial.Serial) -> None:
+    """シリアル接続を可能な限り閉じます。"""
+    try:
+        if ser and ser.is_open:
+            ser.close()
+        print("接続を閉じました。")
+    except Exception as exc:
+        print(f"シリアルポートのクローズに失敗しました: {exc}")
+
+
+def finish_inventory_session(
+    ser: serial.Serial,
+    antenna_selection: Optional[InventoryAntennaSelection],
+    total_iterations: int,
+    total_read_time: float,
+    total_read_count: int,
+    pc_uii_count_dict: dict,
+    inventory_result_item_dict: dict,
+) -> None:
+    """Inventory終了時の復元、保存、切断をまとめて実行します。"""
+    restore_antenna_setting_safely(ser, antenna_selection)
+    save_inventory_results(
+        total_iterations,
+        total_read_time,
+        total_read_count,
+        pc_uii_count_dict,
+        list(inventory_result_item_dict.values()),
+    )
+    close_serial_safely(ser)
 
 
 def run_optional_antenna_check(
@@ -1314,145 +1408,133 @@ def main():
     total_iterations  = 0   # 総繰り返し回数
     pc_uii_count_dict = {}  # PC+UIIごとの読み取り回数を格納する辞書
     inventory_result_item_dict = {}
-    buzzer_enabled = ask_yes_no("読み取り結果をブザーで通知しますか？ [y/N]: ", default=False)
+    try:
+        buzzer_enabled = ask_yes_no("読み取り結果をブザーで通知しますか？ [y/N]: ", default=False)
 
-    while True:
-        try:
-            repeat_count_str = input("繰り返す回数を入力してください（1〜100、終了は'q'）: ").strip()
-            if repeat_count_str.lower() == 'q':
-                break # 'q'が入力されたらループを終了
-            repeat_count = int(repeat_count_str)
-            if not (1 <= repeat_count <= 100):
-                raise ValueError("1から100の範囲で入力してください")
-        except ValueError as e:
-            print(f"入力エラー: {e}。再度入力してください。")
-            continue
+        while True:
+            try:
+                repeat_count_str = input("繰り返す回数を入力してください（1〜100、終了は'q'）: ").strip()
+                if repeat_count_str.lower() == 'q':
+                    break # 'q'が入力されたらループを終了
+                repeat_count = int(repeat_count_str)
+                if not (1 <= repeat_count <= 100):
+                    raise ValueError("1から100の範囲で入力してください")
+            except ValueError as e:
+                print(f"入力エラー: {e}。再度入力してください。")
+                continue
 
-        inventory_targets: list[AntennaCheckTarget | None] = [None]
-        current_antenna_setting: Optional[AntennaSwitchingSetting] = None
+            inventory_targets: list[AntennaCheckTarget | None] = [None]
+            current_antenna_setting: Optional[AntennaSwitchingSetting] = None
 
-        if antenna_selection is not None and antenna_selection.selected_targets:
-            inventory_targets = list(antenna_selection.selected_targets)
-            current_antenna_setting = antenna_selection.restore_setting
+            if antenna_selection is not None and antenna_selection.selected_targets:
+                inventory_targets = list(antenna_selection.selected_targets)
+                current_antenna_setting = antenna_selection.restore_setting
 
-        total_iterations += repeat_count * len(inventory_targets)
+            total_iterations += repeat_count * len(inventory_targets)
 
-        start_time = time.time()
-        stop_current_request = False
+            start_time = time.time()
+            stop_current_request = False
 
-        for _ in range(repeat_count):
-            for inventory_target in inventory_targets:
-                if inventory_target is not None:
-                    print("")
-                    print(f"--- Inventory対象: {inventory_target.label}（{inventory_target.description}） ---")
+            for _ in range(repeat_count):
+                for inventory_target in inventory_targets:
+                    if inventory_target is not None:
+                        print("")
+                        print(f"--- Inventory対象: {inventory_target.label}（{inventory_target.description}） ---")
 
-                    if current_antenna_setting is None:
-                        print("現在のアンテナ設定が不明なため、このアンテナのInventoryをスキップします。")
-                        continue
+                        if current_antenna_setting is None:
+                            print("現在のアンテナ設定が不明なため、このアンテナのInventoryをスキップします。")
+                            continue
 
-                    updated_setting = write_command_mode_antenna_setting(
-                        ser=ser,
-                        current_setting=current_antenna_setting,
-                        target=inventory_target,
-                    )
-                    if updated_setting is None:
-                        print(f"{inventory_target.label}への切替に失敗したため、このアンテナのInventoryをスキップします。")
-                        continue
-
-                    current_antenna_setting = updated_setting
-
-                # UHFインベントリコマンドを送信します。
-                # NACKが返った場合は、アンテナ未接続などの異常が疑われるため、
-                # 残りの繰り返し読み取りを続けず、この入力回のInventoryを中断します。
-                result = communicate(ser, COMMANDS['UHF_INVENTORY'])
-                if result:
-                    # NACK有無は、ブザー選択と繰り返し中断の判断に使います。
-                    # received_data_parse() はNACK内容を表示しますが、戻り値にはNACK有無を含めないため、
-                    # ここで別途、受信フレーム内のNACKを確認します。
-                    has_nack = received_data_contains_nack(result)
-
-                    # 受信データを解析し、PC+UIIリスト、RSSIリスト、期待される読み取り数を取得
-                    pc_uii_list, rssi_list, expected_count, read_channel = received_data_parse(result)
-                    if expected_count is not None:
-                        print(f"読み取り完了レスポンス枚数: {expected_count} 枚")
-                    if read_channel is not None:
-                        print(f"読み取りチャンネル: {read_channel} ch")
-
-                    for pc_uii, rssi_value in zip(pc_uii_list, rssi_list):
-                        pc_uii_hex = pc_uii.hex().upper() # PC+UIIを16進数文字列に変換
-                        print(f"PC+UII: {pc_uii_hex}")
-                        print(f"RSSI: {rssi_value:.1f} dBm")
-                        pc_uii_count_dict[pc_uii_hex] = pc_uii_count_dict.get(pc_uii_hex, 0) + 1 # カウントを更新
-                        antenna_number = inventory_target.number if inventory_target is not None else None
-                        antenna_label = inventory_target.label if inventory_target is not None else None
-                        antenna_description = inventory_target.description if inventory_target is not None else None
-                        item_key = (pc_uii_hex, antenna_number, antenna_label, antenna_description)
-                        if item_key not in inventory_result_item_dict:
-                            inventory_result_item_dict[item_key] = {
-                                "antenna_number": antenna_number,
-                                "antenna_label": antenna_label,
-                                "antenna_description": antenna_description,
-                                "pc_uii": pc_uii_hex,
-                                "read_count": 0,
-                            }
-                        inventory_result_item_dict[item_key]["read_count"] += 1
-
-                    total_read_count += len(pc_uii_list)
-
-                    if buzzer_enabled:
-                        play_buzzer_for_inventory_result(
-                            ser,
-                            has_tag=len(pc_uii_list) > 0,
-                            has_nack=has_nack,
+                        updated_setting = write_command_mode_antenna_setting(
+                            ser=ser,
+                            current_setting=current_antenna_setting,
+                            target=inventory_target,
                         )
+                        if updated_setting is None:
+                            print(f"{inventory_target.label}への切替に失敗したため、このアンテナのInventoryをスキップします。")
+                            continue
 
-                    if should_stop_inventory_repeat(has_nack):
-                        print("NACK応答を受信したため、指定回数の残り読み取りを中断します。")
-                        stop_current_request = True
-                        break
-                else:
-                    print("インベントリ応答がありませんでした。")
-                    if buzzer_enabled:
-                        play_buzzer_for_inventory_result(ser, has_tag=False, has_nack=False)
+                        current_antenna_setting = updated_setting
 
-            if stop_current_request:
-                break
+                    # UHFインベントリコマンドを送信します。
+                    # NACKが返った場合は、アンテナ未接続などの異常が疑われるため、
+                    # 残りの繰り返し読み取りを続けず、この入力回のInventoryを中断します。
+                    result = communicate(ser, COMMANDS['UHF_INVENTORY'])
+                    if result:
+                        # NACK有無は、ブザー選択と繰り返し中断の判断に使います。
+                        # received_data_parse() はNACK内容を表示しますが、戻り値にはNACK有無を含めないため、
+                        # ここで別途、受信フレーム内のNACKを確認します。
+                        has_nack = received_data_contains_nack(result)
 
-        end_time = time.time()
-        total_read_time += (end_time - start_time)
+                        # 受信データを解析し、PC+UIIリスト、RSSIリスト、期待される読み取り数を取得
+                        pc_uii_list, rssi_list, expected_count, read_channel = received_data_parse(result)
+                        if expected_count is not None:
+                            print(f"読み取り完了レスポンス枚数: {expected_count} 枚")
+                        if read_channel is not None:
+                            print(f"読み取りチャンネル: {read_channel} ch")
 
-        print(f"現在の合計読み取り時間: {total_read_time:.2f} 秒")
-        print(f"現在の合計読み取り枚数: {total_read_count} 枚")
+                        for pc_uii, rssi_value in zip(pc_uii_list, rssi_list):
+                            pc_uii_hex = pc_uii.hex().upper() # PC+UIIを16進数文字列に変換
+                            print(f"PC+UII: {pc_uii_hex}")
+                            print(f"RSSI: {rssi_value:.1f} dBm")
+                            pc_uii_count_dict[pc_uii_hex] = pc_uii_count_dict.get(pc_uii_hex, 0) + 1 # カウントを更新
+                            antenna_number = inventory_target.number if inventory_target is not None else None
+                            antenna_label = inventory_target.label if inventory_target is not None else None
+                            antenna_description = inventory_target.description if inventory_target is not None else None
+                            item_key = (pc_uii_hex, antenna_number, antenna_label, antenna_description)
+                            if item_key not in inventory_result_item_dict:
+                                inventory_result_item_dict[item_key] = {
+                                    "antenna_number": antenna_number,
+                                    "antenna_label": antenna_label,
+                                    "antenna_description": antenna_description,
+                                    "pc_uii": pc_uii_hex,
+                                    "read_count": 0,
+                                }
+                            inventory_result_item_dict[item_key]["read_count"] += 1
 
-    # --- アンテナ設定の復元 ---
-    if antenna_selection is not None:
-        restore_command_mode_antenna_setting(ser, antenna_selection.restore_setting)
+                        total_read_count += len(pc_uii_list)
 
-    # --- 集計結果の保存 ---
-    save_results_to_file("inventory_results.txt", total_iterations, total_read_time, total_read_count, pc_uii_count_dict)
-    print("集計結果を inventory_results.txt に保存しました。")
-    summary = build_result_summary(
-        total_iterations,
-        total_read_time,
-        total_read_count,
-        pc_uii_count_dict,
-        items=list(inventory_result_item_dict.values()),
-    )
-    try:
-        save_results_to_csv("inventory_results.csv", summary)
-        print("集計結果を inventory_results.csv に保存しました。")
-    except OSError as e:
-        print(f"CSV保存エラー: {e}")
-    try:
-        save_results_to_json("inventory_results.json", summary)
-        print("集計結果を inventory_results.json に保存しました。")
-    except (OSError, ValueError, json.JSONDecodeError) as e:
-        print(f"JSON保存エラー: {e}")
+                        if buzzer_enabled:
+                            play_buzzer_for_inventory_result(
+                                ser,
+                                has_tag=len(pc_uii_list) > 0,
+                                has_nack=has_nack,
+                            )
 
-    # --- シリアルポートクローズ ---
-    if ser and ser.is_open:
-        ser.close()
-    print("接続を閉じました。")
+                        if should_stop_inventory_repeat(has_nack):
+                            print("NACK応答を受信したため、指定回数の残り読み取りを中断します。")
+                            stop_current_request = True
+                            break
+                    else:
+                        print("インベントリ応答がありませんでした。")
+                        if buzzer_enabled:
+                            play_buzzer_for_inventory_result(ser, has_tag=False, has_nack=False)
+
+                if stop_current_request:
+                    break
+
+            end_time = time.time()
+            total_read_time += (end_time - start_time)
+
+            print(f"現在の合計読み取り時間: {total_read_time:.2f} 秒")
+            print(f"現在の合計読み取り枚数: {total_read_count} 枚")
+    except KeyboardInterrupt:
+        print("")
+        print("中断要求を受け付けました。終了処理を行います。")
+    except Exception as exc:
+        print("")
+        print("Inventory処理中にエラーが発生しました。終了処理を行います。")
+        print(f"エラー内容: {exc}")
+    finally:
+        finish_inventory_session(
+            ser,
+            antenna_selection,
+            total_iterations,
+            total_read_time,
+            total_read_count,
+            pc_uii_count_dict,
+            inventory_result_item_dict,
+        )
 
 if __name__ == '__main__':
     main()
