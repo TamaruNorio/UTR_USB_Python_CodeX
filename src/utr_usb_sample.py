@@ -74,13 +74,53 @@ try:
     from src.utr_protocol import format_nack_message, parse_output_power_dbm
     from src.utr_result_export import build_result_summary, save_results_to_csv, save_results_to_json
     from src.utr_serial_ports import format_port_info, find_port_by_user_input, is_quit_input
-    from src.utr_commands import BUZZER_SOUND_NACK, build_buzzer_command
+    from src.utr_commands import (
+        BUZZER_SOUND_NACK,
+        PARAMETER_KIND_COMMAND_MODE,
+        PARAMETER_KIND_FLASH,
+        build_buzzer_command,
+        build_check_antenna_command,
+        build_read_antenna_switching_setting_command,
+    )
+    from src.utr_antenna import (
+        AntennaModelProfile,
+        RomVersionInfo,
+        format_antenna_switching_setting,
+        format_check_antenna_result,
+        format_rom_version_info,
+        identify_model_key_from_rom,
+        get_model_profile,
+        list_model_profiles,
+        parse_antenna_switching_setting_response,
+        parse_check_antenna_response,
+        parse_rom_version_response,
+    )
 except ModuleNotFoundError:
     from utr_inventory import format_inventory_param_response, parse_inventory_param_response
     from utr_protocol import format_nack_message, parse_output_power_dbm
     from utr_result_export import build_result_summary, save_results_to_csv, save_results_to_json
     from utr_serial_ports import format_port_info, find_port_by_user_input, is_quit_input
-    from utr_commands import BUZZER_SOUND_NACK, build_buzzer_command
+    from utr_commands import (
+        BUZZER_SOUND_NACK,
+        PARAMETER_KIND_COMMAND_MODE,
+        PARAMETER_KIND_FLASH,
+        build_buzzer_command,
+        build_check_antenna_command,
+        build_read_antenna_switching_setting_command,
+    )
+    from utr_antenna import (
+        AntennaModelProfile,
+        RomVersionInfo,
+        format_antenna_switching_setting,
+        format_check_antenna_result,
+        format_rom_version_info,
+        identify_model_key_from_rom,
+        get_model_profile,
+        list_model_profiles,
+        parse_antenna_switching_setting_response,
+        parse_check_antenna_response,
+        parse_rom_version_response,
+    )
 
 
 # UTR用 シリアル送信コマンドの定義
@@ -565,6 +605,162 @@ def ask_yes_no(prompt: str, default: bool = False) -> bool:
         print("無効な入力です。y または n を入力してください。")
 
 
+def prompt_for_antenna_model_profile(identified_model_key: str | None = None) -> AntennaModelProfile:
+    """アンテナ接続チェック対象の機種を選択します。
+
+    Args:
+        identified_model_key:
+            ROMシリーズ名コードと仕様書上の機種対応表を照合して確定した機種キー。
+            一致する場合はEnterで採用できます。
+    """
+    profiles = list_model_profiles()
+    identified_index: int | None = None
+
+    print("アンテナ接続チェック対象の機種を選択してください。")
+    for index, profile in enumerate(profiles, start=1):
+        marker = ""
+        if identified_model_key == profile.key:
+            marker = "  ← ROMバージョンから仕様書上確定"
+            identified_index = index
+        print(f"[{index}] {profile.display_name}{marker}")
+        print(f"    {profile.note}")
+
+    while True:
+        prompt = "機種番号を入力してください（終了は'q'）: "
+        if identified_index is not None:
+            prompt = f"機種番号を入力してください（Enter=仕様書照合機種[{identified_index}]、終了は'q'）: "
+
+        value = input(prompt).strip()
+        if value == "" and identified_index is not None:
+            return profiles[identified_index - 1]
+        if is_quit_input(value):
+            print("アンテナ接続チェックを中止します。")
+            raise KeyboardInterrupt
+
+        try:
+            selected_index = int(value)
+        except ValueError:
+            print("入力エラー: 表示された番号を入力してください。")
+            continue
+
+        if 1 <= selected_index <= len(profiles):
+            return profiles[selected_index - 1]
+
+        print("入力エラー: 表示された番号の範囲で入力してください。")
+
+
+def read_and_print_antenna_switching_setting(ser: serial.Serial, parameter_kind: int) -> None:
+    """アンテナ切替設定を読み取り、画面へ表示します。
+
+    注意:
+        読み取り専用です。FLASHやRAMへの書き込みは行いません。
+    """
+    response = communicate(
+        ser,
+        build_read_antenna_switching_setting_command(parameter_kind=parameter_kind),
+    )
+
+    if re.match(STX + b'.' + ACK, response):
+        try:
+            setting = parse_antenna_switching_setting_response(response)
+        except ValueError as exc:
+            print(f"アンテナ切替設定レスポンスの解析に失敗しました: {exc}")
+            print("Raw:", response.hex().upper())
+            return
+
+        for line in format_antenna_switching_setting(setting):
+            print(line)
+    elif re.match(STX + b'.' + NACK, response):
+        print_nack_message(response)
+    else:
+        print("アンテナ切替設定の読み取りで ACK/NACK がありません。")
+        print("Raw:", response.hex().upper())
+
+
+def check_and_print_antennas(ser: serial.Serial, profile: AntennaModelProfile) -> None:
+    """UHF_CheckAntennaで、機種に応じたアンテナ接続確認を行います。
+
+    Args:
+        ser (serial.Serial): 接続済みのシリアル通信オブジェクト。
+        profile (AntennaModelProfile): 機種別アンテナプロファイル。
+
+    注意:
+        この処理は接続確認コマンドだけを送信します。
+        アンテナ切替設定やFLASH設定は変更しません。
+    """
+    print("アンテナ接続チェックを開始します。")
+    print(f"対象機種: {profile.display_name}")
+
+    connected_labels: list[str] = []
+
+    for target in profile.check_targets:
+        print(f"{target.label} 接続確認中... {target.description}")
+        response = communicate(ser, build_check_antenna_command(target.number))
+
+        if re.match(STX + b'.' + ACK, response):
+            try:
+                result = parse_check_antenna_response(response)
+            except ValueError as exc:
+                print(f"  解析エラー: {exc}")
+                print("  Raw:", response.hex().upper())
+                continue
+
+            print(" ", format_check_antenna_result(result, profile=profile))
+            if result.is_connected:
+                connected_labels.append(target.label)
+        elif re.match(STX + b'.' + NACK, response):
+            print_nack_message(response)
+        else:
+            print("  ACK/NACK がありません。")
+            print("  Raw:", response.hex().upper())
+
+    connected_text = ", ".join(connected_labels) if connected_labels else "なし"
+    print("アンテナ接続チェック結果:")
+    print(f"  接続OK: {connected_text}")
+    print("補足: 今回の処理ではアンテナ設定を書き換えていません。")
+
+
+def run_optional_antenna_check(ser: serial.Serial, rom_info: RomVersionInfo | None = None) -> None:
+    """必要に応じて、アンテナ設定表示と接続確認を行います。
+
+    ROMシリーズ名コードから仕様書上の機種が確定できる場合は、
+    機種番号を手入力させず、その機種プロファイルを自動採用します。
+    未知のROMシリーズ名の場合だけ、手動選択に切り替えます。
+    """
+    if not ask_yes_no("アンテナ設定表示・接続チェックを実行しますか？ [y/N]: ", default=False):
+        return
+
+    identified_model_key = identify_model_key_from_rom(rom_info) if rom_info is not None else None
+
+    if identified_model_key is not None:
+        profile = get_model_profile(identified_model_key)
+        print(f"ROMバージョンから仕様書上の機種を確定しました: {profile.display_name}")
+        print("この機種プロファイルを自動採用します。")
+    else:
+        try:
+            profile = prompt_for_antenna_model_profile(identified_model_key=None)
+        except KeyboardInterrupt:
+            return
+
+    print("")
+    print("=== アンテナプロトコル確認 ===")
+    print(f"対象機種: {profile.display_name}")
+    print(profile.note)
+
+    if profile.supports_antenna_switching_setting:
+        print("")
+        print("=== アンテナ切替設定の現在値（読み取りのみ） ===")
+        read_and_print_antenna_switching_setting(ser, PARAMETER_KIND_COMMAND_MODE)
+        read_and_print_antenna_switching_setting(ser, PARAMETER_KIND_FLASH)
+    else:
+        print("")
+        print("この機種では、今回のPRではアンテナ切替設定 55 43 の自動読み取りを行いません。")
+        print("理由: 8CH機や1CH機では、アンテナ切替設定と使用アンテナ番号の体系が異なるためです。")
+
+    print("")
+    check_and_print_antennas(ser, profile=profile)
+
+
 def received_data_contains_nack(data: bytes) -> bool:
     """受信データの中にNACK応答が含まれるか確認します。
 
@@ -713,11 +909,20 @@ def main():
 
     # --- ROMバージョンで通信確認 ---
     # ROMバージョン確認コマンドを送信し、応答を待つ
+    rom_info: RomVersionInfo | None = None
     result = communicate(ser, COMMANDS['ROM_VERSION_CHECK'])
     # 応答がACKで、詳細コマンドがROMバージョン確認のものであるかチェック
     if re.match(STX + b'.' + ACK, result):
         if bytes([result[DETAIL_LOCATION]]) == DETAIL_ROM:
             print("USB通信: OK（ROMバージョン ACK 受信）")
+            try:
+                rom_info = parse_rom_version_response(result)
+                identified_model_key = identify_model_key_from_rom(rom_info)
+                for line in format_rom_version_info(rom_info, identified_model_key=identified_model_key):
+                    print(line)
+            except ValueError as exc:
+                print(f"ROMバージョンレスポンスの解析に失敗しました: {exc}")
+                print("Raw:", result.hex().upper())
     # 応答がNACKの場合
     elif re.match(STX + b'.' + NACK, result):
         if bytes([result[DETAIL_LOCATION]]) == DETAIL_ROM:
@@ -790,6 +995,11 @@ def main():
     for line in format_inventory_param_response(inventory_param):
         print(line)
     print("UHF_SET_INVENTORY_PARAM は自動送信しません。設定変更は行いません。")
+
+    # --- アンテナ設定表示・接続チェック（任意） ---
+    # UHF_CheckAntennaは接続確認専用コマンドです。
+    # ここではFLASHやRAMへの書き込みは行いません。
+    run_optional_antenna_check(ser, rom_info=rom_info)
 
     # --- 読み取りループ ---
     total_read_time   = 0.0 # 総読み取り時間
