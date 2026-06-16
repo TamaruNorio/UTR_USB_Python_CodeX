@@ -81,9 +81,12 @@ try:
         build_buzzer_command,
         build_check_antenna_command,
         build_read_antenna_switching_setting_command,
+        build_write_antenna_switching_setting_command,
     )
     from src.utr_antenna import (
+        AntennaCheckTarget,
         AntennaModelProfile,
+        AntennaSwitchingSetting,
         RomVersionInfo,
         format_antenna_switching_setting,
         format_check_antenna_result,
@@ -92,6 +95,7 @@ try:
         get_model_profile,
         list_model_profiles,
         parse_antenna_switching_setting_response,
+        parse_antenna_switching_setting_write_response,
         parse_check_antenna_response,
         parse_rom_version_response,
     )
@@ -107,9 +111,12 @@ except ModuleNotFoundError:
         build_buzzer_command,
         build_check_antenna_command,
         build_read_antenna_switching_setting_command,
+        build_write_antenna_switching_setting_command,
     )
     from utr_antenna import (
+        AntennaCheckTarget,
         AntennaModelProfile,
+        AntennaSwitchingSetting,
         RomVersionInfo,
         format_antenna_switching_setting,
         format_check_antenna_result,
@@ -118,6 +125,7 @@ except ModuleNotFoundError:
         get_model_profile,
         list_model_profiles,
         parse_antenna_switching_setting_response,
+        parse_antenna_switching_setting_write_response,
         parse_check_antenna_response,
         parse_rom_version_response,
     )
@@ -649,8 +657,16 @@ def prompt_for_antenna_model_profile(identified_model_key: str | None = None) ->
         print("入力エラー: 表示された番号の範囲で入力してください。")
 
 
-def read_and_print_antenna_switching_setting(ser: serial.Serial, parameter_kind: int) -> None:
+def read_and_print_antenna_switching_setting(
+    ser: serial.Serial,
+    parameter_kind: int,
+) -> Optional[AntennaSwitchingSetting]:
     """アンテナ切替設定を読み取り、画面へ表示します。
+
+    Returns:
+        AntennaSwitchingSetting | None:
+            正常に読み取れた場合は解析結果。
+            通信エラーやNACKの場合は None。
 
     注意:
         読み取り専用です。FLASHやRAMへの書き込みは行いません。
@@ -666,23 +682,30 @@ def read_and_print_antenna_switching_setting(ser: serial.Serial, parameter_kind:
         except ValueError as exc:
             print(f"アンテナ切替設定レスポンスの解析に失敗しました: {exc}")
             print("Raw:", response.hex().upper())
-            return
+            return None
 
         for line in format_antenna_switching_setting(setting):
             print(line)
+        return setting
     elif re.match(STX + b'.' + NACK, response):
         print_nack_message(response)
+        return None
     else:
         print("アンテナ切替設定の読み取りで ACK/NACK がありません。")
         print("Raw:", response.hex().upper())
+        return None
 
 
-def check_and_print_antennas(ser: serial.Serial, profile: AntennaModelProfile) -> None:
+def check_and_print_antennas(ser: serial.Serial, profile: AntennaModelProfile) -> list[AntennaCheckTarget]:
     """UHF_CheckAntennaで、機種に応じたアンテナ接続確認を行います。
 
     Args:
         ser (serial.Serial): 接続済みのシリアル通信オブジェクト。
         profile (AntennaModelProfile): 機種別アンテナプロファイル。
+
+    Returns:
+        list[AntennaCheckTarget]:
+            接続OKだったアンテナ対象のリスト。
 
     注意:
         この処理は接続確認コマンドだけを送信します。
@@ -691,7 +714,7 @@ def check_and_print_antennas(ser: serial.Serial, profile: AntennaModelProfile) -
     print("アンテナ接続チェックを開始します。")
     print(f"対象機種: {profile.display_name}")
 
-    connected_labels: list[str] = []
+    connected_targets: list[AntennaCheckTarget] = []
 
     for target in profile.check_targets:
         print(f"{target.label} 接続確認中... {target.description}")
@@ -707,28 +730,201 @@ def check_and_print_antennas(ser: serial.Serial, profile: AntennaModelProfile) -
 
             print(" ", format_check_antenna_result(result, profile=profile))
             if result.is_connected:
-                connected_labels.append(target.label)
+                connected_targets.append(target)
         elif re.match(STX + b'.' + NACK, response):
             print_nack_message(response)
         else:
             print("  ACK/NACK がありません。")
             print("  Raw:", response.hex().upper())
 
-    connected_text = ", ".join(connected_labels) if connected_labels else "なし"
+    connected_text = ", ".join(target.label for target in connected_targets) if connected_targets else "なし"
     print("アンテナ接続チェック結果:")
     print(f"  接続OK: {connected_text}")
-    print("補足: 今回の処理ではアンテナ設定を書き換えていません。")
+    print("補足: この時点ではアンテナ設定を書き換えていません。")
+    return connected_targets
 
 
-def run_optional_antenna_check(ser: serial.Serial, rom_info: RomVersionInfo | None = None) -> None:
+def filter_inventory_antenna_targets(
+    connected_targets: list[AntennaCheckTarget],
+    flash_setting: AntennaSwitchingSetting,
+) -> list[AntennaCheckTarget]:
+    """Inventory対象にできるアンテナだけを抽出します。
+
+    条件:
+        1. UHF_CheckAntennaで接続OK
+        2. FLASHデータで使用許可あり
+
+    補足:
+        物理的に接続OKでも、FLASH側で使用許可がないアンテナは
+        コマンドモード用パラメータへ書き込むとNACKになる可能性があります。
+    """
+    flash_enabled_numbers = set(flash_setting.enabled_antennas)
+    available_targets: list[AntennaCheckTarget] = []
+
+    for target in connected_targets:
+        if target.number in flash_enabled_numbers:
+            available_targets.append(target)
+        else:
+            print(
+                f"{target.label} は接続OKですが、FLASHデータで使用許可がないためInventory候補から外します。"
+            )
+
+    return available_targets
+
+
+def prompt_for_inventory_antenna_target(
+    available_targets: list[AntennaCheckTarget],
+) -> Optional[AntennaCheckTarget]:
+    """Inventoryで使用するアンテナをユーザーに選択してもらいます。"""
+    if not available_targets:
+        print("Inventoryに使用できるアンテナがありません。アンテナ設定は変更しません。")
+        return None
+
+    print("")
+    print("Inventoryに使用できるアンテナ候補:")
+    for target in available_targets:
+        print(f"[{target.number}] {target.label}（{target.description}）")
+
+    if len(available_targets) == 1:
+        target = available_targets[0]
+        if ask_yes_no(
+            f"接続OKのアンテナが1つだけのため、{target.label}をInventoryに使用しますか？ [Y/n]: ",
+            default=True,
+        ):
+            return target
+        print("アンテナ設定は変更しません。")
+        return None
+
+    available_numbers = {target.number for target in available_targets}
+    while True:
+        value = input("Inventoryに使用するアンテナ番号を入力してください（終了は'q'）: ").strip()
+        if is_quit_input(value):
+            print("アンテナ設定は変更しません。")
+            return None
+
+        try:
+            selected_number = int(value)
+        except ValueError:
+            print("入力エラー: 表示されたアンテナ番号を入力してください。")
+            continue
+
+        if selected_number in available_numbers:
+            for target in available_targets:
+                if target.number == selected_number:
+                    return target
+
+        print("入力エラー: 候補に表示されているアンテナ番号を入力してください。")
+
+
+def write_command_mode_antenna_setting(
+    ser: serial.Serial,
+    original_setting: AntennaSwitchingSetting,
+    target: AntennaCheckTarget,
+) -> bool:
+    """コマンドモード用アンテナ設定を一時変更します。
+
+    Args:
+        ser: 接続済みシリアルオブジェクト。
+        original_setting: 変更前のコマンドモード用アンテナ切替設定。
+        target: Inventoryで使用したいアンテナ。
+
+    Returns:
+        bool: 書き込みACKを受け取れた場合は True。
+
+    注意:
+        FLASHには書き込みません。コマンドモード用パラメータだけを一時変更します。
+    """
+    selected_mask = 1 << target.number
+
+    if original_setting.antenna_mask == selected_mask:
+        print(f"コマンドモード用アンテナ設定はすでに {target.label} です。変更しません。")
+        return False
+
+    print("")
+    print("コマンドモード用アンテナ設定を一時変更します。")
+    print(f"変更前: {format_antenna_numbers(original_setting.enabled_antennas)}")
+    print(f"変更後: {target.label}（{target.description}）")
+    print("FLASHは変更しません。")
+
+    response = communicate(
+        ser,
+        build_write_antenna_switching_setting_command(
+            parameter_kind=PARAMETER_KIND_COMMAND_MODE,
+            switching_mode=original_setting.switching_mode,
+            antenna_id_output_enabled=original_setting.antenna_id_output_enabled,
+            antenna_mask=selected_mask,
+        ),
+    )
+
+    if re.match(STX + b'.' + ACK, response):
+        try:
+            written_setting = parse_antenna_switching_setting_write_response(response)
+        except ValueError as exc:
+            print(f"アンテナ切替設定書き込みレスポンスの解析に失敗しました: {exc}")
+            print("Raw:", response.hex().upper())
+            return False
+
+        print("コマンドモード用アンテナ設定を一時変更しました。")
+        for line in format_antenna_switching_setting(written_setting):
+            print(line)
+        return True
+
+    if re.match(STX + b'.' + NACK, response):
+        print_nack_message(response)
+        return False
+
+    print("アンテナ切替設定の書き込みで ACK/NACK がありません。")
+    print("Raw:", response.hex().upper())
+    return False
+
+
+def restore_command_mode_antenna_setting(
+    ser: serial.Serial,
+    original_setting: AntennaSwitchingSetting,
+) -> None:
+    """コマンドモード用アンテナ設定を元に戻します。"""
+    print("")
+    print("コマンドモード用アンテナ設定を元に戻します。")
+    print(f"復元対象: {format_antenna_numbers(original_setting.enabled_antennas)}")
+    print("FLASHは変更していません。")
+
+    response = communicate(
+        ser,
+        build_write_antenna_switching_setting_command(
+            parameter_kind=PARAMETER_KIND_COMMAND_MODE,
+            switching_mode=original_setting.switching_mode,
+            antenna_id_output_enabled=original_setting.antenna_id_output_enabled,
+            antenna_mask=original_setting.antenna_mask,
+        ),
+    )
+
+    if re.match(STX + b'.' + ACK, response):
+        print("コマンドモード用アンテナ設定を元に戻しました。")
+    elif re.match(STX + b'.' + NACK, response):
+        print("コマンドモード用アンテナ設定の復元でNACKを受信しました。")
+        print_nack_message(response)
+    else:
+        print("コマンドモード用アンテナ設定の復元で ACK/NACK がありません。")
+        print("Raw:", response.hex().upper())
+
+
+def run_optional_antenna_check(
+    ser: serial.Serial,
+    rom_info: RomVersionInfo | None = None,
+) -> Optional[AntennaSwitchingSetting]:
     """必要に応じて、アンテナ設定表示と接続確認を行います。
+
+    Returns:
+        AntennaSwitchingSetting | None:
+            コマンドモード用アンテナ設定を一時変更した場合は、復元用の変更前設定。
+            変更しなかった場合は None。
 
     ROMシリーズ名コードから仕様書上の機種が確定できる場合は、
     機種番号を手入力させず、その機種プロファイルを自動採用します。
     未知のROMシリーズ名の場合だけ、手動選択に切り替えます。
     """
     if not ask_yes_no("アンテナ設定表示・接続チェックを実行しますか？ [y/N]: ", default=False):
-        return
+        return None
 
     identified_model_key = identify_model_key_from_rom(rom_info) if rom_info is not None else None
 
@@ -740,25 +936,53 @@ def run_optional_antenna_check(ser: serial.Serial, rom_info: RomVersionInfo | No
         try:
             profile = prompt_for_antenna_model_profile(identified_model_key=None)
         except KeyboardInterrupt:
-            return
+            return None
 
     print("")
     print("=== アンテナプロトコル確認 ===")
     print(f"対象機種: {profile.display_name}")
     print(profile.note)
 
+    command_mode_setting: Optional[AntennaSwitchingSetting] = None
+    flash_setting: Optional[AntennaSwitchingSetting] = None
+
     if profile.supports_antenna_switching_setting:
         print("")
         print("=== アンテナ切替設定の現在値（読み取りのみ） ===")
-        read_and_print_antenna_switching_setting(ser, PARAMETER_KIND_COMMAND_MODE)
-        read_and_print_antenna_switching_setting(ser, PARAMETER_KIND_FLASH)
+        command_mode_setting = read_and_print_antenna_switching_setting(ser, PARAMETER_KIND_COMMAND_MODE)
+        flash_setting = read_and_print_antenna_switching_setting(ser, PARAMETER_KIND_FLASH)
     else:
         print("")
         print("この機種では、今回のPRではアンテナ切替設定 55 43 の自動読み取りを行いません。")
         print("理由: 8CH機や1CH機では、アンテナ切替設定と使用アンテナ番号の体系が異なるためです。")
 
     print("")
-    check_and_print_antennas(ser, profile=profile)
+    connected_targets = check_and_print_antennas(ser, profile=profile)
+
+    if profile.key != "UTR-SUN02-4CH":
+        print("このPRでは、Inventory対象アンテナの一時変更はUTR-SUN02-4CHだけを対象にします。")
+        return None
+
+    if command_mode_setting is None or flash_setting is None:
+        print("アンテナ切替設定を読み取れなかったため、Inventory対象アンテナは変更しません。")
+        return None
+
+    available_targets = filter_inventory_antenna_targets(
+        connected_targets=connected_targets,
+        flash_setting=flash_setting,
+    )
+    selected_target = prompt_for_inventory_antenna_target(available_targets)
+    if selected_target is None:
+        return None
+
+    if write_command_mode_antenna_setting(
+        ser=ser,
+        original_setting=command_mode_setting,
+        target=selected_target,
+    ):
+        return command_mode_setting
+
+    return None
 
 
 def received_data_contains_nack(data: bytes) -> bool:
@@ -999,7 +1223,7 @@ def main():
     # --- アンテナ設定表示・接続チェック（任意） ---
     # UHF_CheckAntennaは接続確認専用コマンドです。
     # ここではFLASHやRAMへの書き込みは行いません。
-    run_optional_antenna_check(ser, rom_info=rom_info)
+    antenna_restore_setting = run_optional_antenna_check(ser, rom_info=rom_info)
 
     # --- 読み取りループ ---
     total_read_time   = 0.0 # 総読み取り時間
@@ -1069,6 +1293,10 @@ def main():
 
         print(f"現在の合計読み取り時間: {total_read_time:.2f} 秒")
         print(f"現在の合計読み取り枚数: {total_read_count} 枚")
+
+    # --- アンテナ設定の復元 ---
+    if antenna_restore_setting is not None:
+        restore_command_mode_antenna_setting(ser, antenna_restore_setting)
 
     # --- 集計結果の保存 ---
     save_results_to_file("inventory_results.txt", total_iterations, total_read_time, total_read_count, pc_uii_count_dict)

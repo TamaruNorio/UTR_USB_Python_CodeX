@@ -17,6 +17,7 @@ from src.utr_antenna import (
     get_model_profile,
     identify_model_key_from_rom,
     parse_antenna_switching_setting_response,
+    parse_antenna_switching_setting_write_response,
     parse_check_antenna_response,
     parse_rom_version_response,
 )
@@ -25,6 +26,7 @@ from src.utr_commands import (
     PARAMETER_KIND_FLASH,
     build_check_antenna_command,
     build_read_antenna_switching_setting_command,
+    build_write_antenna_switching_setting_command,
 )
 
 
@@ -191,4 +193,52 @@ def test_format_rom_version_info_contains_identified_model():
     assert "ROMシリーズ名: USM02" in text
     assert "仕様書照合機種" in text
     assert "UTR-SUN02-4CH" in text
+
+def test_build_write_antenna_switching_setting_command_for_command_mode_ant0():
+    assert build_write_antenna_switching_setting_command(
+        parameter_kind=PARAMETER_KIND_COMMAND_MODE,
+        switching_mode=1,
+        antenna_id_output_enabled=True,
+        antenna_mask=0x01,
+    ) == bytes.fromhex("02 00 55 08 33 00 00 81 01 00 00 00 03 17 0D")
+
+
+def test_build_write_antenna_switching_setting_command_for_command_mode_ant1():
+    assert build_write_antenna_switching_setting_command(
+        parameter_kind=PARAMETER_KIND_COMMAND_MODE,
+        switching_mode=1,
+        antenna_id_output_enabled=True,
+        antenna_mask=0x02,
+    ) == bytes.fromhex("02 00 55 08 33 00 00 81 02 00 00 00 03 18 0D")
+
+
+def test_build_write_antenna_switching_setting_command_for_flash_example_is_known_but_not_used_by_pr17():
+    assert build_write_antenna_switching_setting_command(
+        parameter_kind=PARAMETER_KIND_FLASH,
+        switching_mode=1,
+        antenna_id_output_enabled=True,
+        antenna_mask=0x0F,
+    ) == bytes.fromhex("02 00 55 08 33 00 02 81 0F 00 00 00 03 27 0D")
+
+
+def test_parse_antenna_switching_setting_write_response_for_command_mode_ant0():
+    response = bytes.fromhex("02 00 30 08 33 00 00 81 01 00 00 00 03 F2 0D")
+    setting = parse_antenna_switching_setting_write_response(response)
+
+    assert setting.parameter_kind == PARAMETER_KIND_COMMAND_MODE
+    assert setting.switching_mode == 1
+    assert setting.antenna_id_output_enabled is True
+    assert setting.antenna_mask == 0x01
+    assert setting.enabled_antennas == [0]
+
+
+def test_parse_antenna_switching_setting_write_response_for_command_mode_ant1():
+    response = bytes.fromhex("02 00 30 08 33 00 00 81 02 00 00 00 03 F3 0D")
+    setting = parse_antenna_switching_setting_write_response(response)
+
+    assert setting.parameter_kind == PARAMETER_KIND_COMMAND_MODE
+    assert setting.switching_mode == 1
+    assert setting.antenna_id_output_enabled is True
+    assert setting.antenna_mask == 0x02
+    assert setting.enabled_antennas == [1]
 

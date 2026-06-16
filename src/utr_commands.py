@@ -178,6 +178,42 @@ def build_check_antenna_command(antenna_number: int) -> bytes:
     return build_frame(0x55, bytes([0x44, antenna_number]))
 
 
+def build_write_antenna_switching_setting_command(
+    parameter_kind: int,
+    switching_mode: int,
+    antenna_id_output_enabled: bool,
+    antenna_mask: int,
+) -> bytes:
+    """アンテナ切替設定の書き込みコマンドを生成します。
+
+    Args:
+        parameter_kind:
+            書き込み先のパラメータ種類。
+            今回の実機操作では 0x00 = コマンドモード用パラメータのみ使用します。
+        switching_mode:
+            アンテナ切替方式。現在値を保持して書き戻す用途を想定します。
+        antenna_id_output_enabled:
+            アンテナID出力を有効にする場合は True。
+        antenna_mask:
+            使用アンテナのビットマスク。
+            例: Ant0=0x01, Ant1=0x02, Ant2=0x04, Ant3=0x08。
+
+    Returns:
+        送信用フレーム。
+
+    重要:
+        この関数はフレームを生成するだけです。
+        実際にFLASHへ書き込むかどうかは呼び出し側が制御します。
+        PR-17ではFLASHへは書き込みません。
+    """
+    _validate_byte_value(parameter_kind, "parameter_kind")
+    _validate_byte_value(switching_mode, "switching_mode")
+    _validate_byte_value(antenna_mask, "antenna_mask")
+
+    flags = (0x80 if antenna_id_output_enabled else 0x00) | (switching_mode & 0x03)
+    return build_frame(0x55, bytes([0x33, 0x00, parameter_kind, flags, antenna_mask, 0x00, 0x00, 0x00]))
+
+
 def validate_defined_commands() -> dict[str, bool]:
     """定義済みコマンドの基本的なフレーム整合性を検証します。
 
