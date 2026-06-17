@@ -33,6 +33,7 @@ OutputPowerValue = Union[int, float, str, Decimal]
 OUTPUT_POWER_TENTHS_PER_DBM = Decimal("10")
 OUTPUT_POWER_RAW_MIN = 0
 OUTPUT_POWER_RAW_MAX = 0xFFFF
+OUTPUT_POWER_CANCEL_INPUTS = {"", "q", "quit", "cancel"}
 
 
 def _to_decimal_dbm(value: OutputPowerValue) -> Decimal:
@@ -97,7 +98,7 @@ def output_power_dbm_to_bytes(value: OutputPowerValue) -> bytes:
     """dBm単位の送信出力値を、2バイト little-endian へ変換します。
 
     例:
-        24.0 dBm -> b"\\xF0\\x00"
+        24.0 dBm -> b"\xF0\x00"
 
     Args:
         value: dBm単位の送信出力値。
@@ -125,3 +126,29 @@ def output_power_bytes_to_dbm(data: bytes) -> float:
         raise ValueError("output power level must be exactly 2 bytes")
 
     return parse_little_endian_u16(data) / 10.0
+
+
+def parse_output_power_dbm_input(user_input: str) -> Decimal | None:
+    """ユーザー入力文字列を送信出力dBm値として解釈します。
+
+    この関数は、将来のUI接続前に入力解釈だけをテスト可能にするための純粋関数です。
+    実機通信、送信出力書き込み、FLASH保存は行いません。
+
+    Args:
+        user_input: ユーザーが入力した文字列。
+            空文字、`q`、`quit`、`cancel` は変更中止として扱います。
+
+    Returns:
+        変更中止の場合は None。
+        数値入力の場合は Decimal 型の dBm 値。
+
+    Raises:
+        ValueError: 数値でない場合、0.1 dBm単位でない場合、2バイト表現に収まらない場合。
+    """
+    stripped_input = user_input.strip()
+    if stripped_input.lower() in OUTPUT_POWER_CANCEL_INPUTS:
+        return None
+
+    decimal_value = _to_decimal_dbm(stripped_input)
+    output_power_dbm_to_raw_value(decimal_value)
+    return decimal_value
