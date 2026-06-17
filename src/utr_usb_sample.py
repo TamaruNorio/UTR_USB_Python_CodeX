@@ -7,7 +7,7 @@
 通常実行時は、送信出力一時変更つきInventoryフローを起動します。
 
 この構成により、既存テストや他モジュールからの import 互換性を維持しながら、
-標準入口 `py .\src\utr_usb_sample.py` を新しいInventoryフローへ切り替えます。
+標準入口 `py ./src/utr_usb_sample.py` を新しいInventoryフローへ切り替えます。
 """
 
 from __future__ import annotations
