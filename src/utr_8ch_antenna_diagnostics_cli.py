@@ -11,6 +11,7 @@
 - 8CH機種判定
 - コマンドモード切替
 - ANT1〜ANT8のUHF_CheckAntenna実行
+- 接続OKアンテナからInventory候補を選択
 
 行わないこと:
 - アンテナ切替設定の書き込み
@@ -28,7 +29,13 @@ import serial
 from serial.tools import list_ports
 
 try:
-    from src.utr_8ch import format_8ch_diagnostic_notes, is_8ch_model_key
+    from src.utr_8ch import (
+        build_8ch_inventory_targets,
+        format_8ch_diagnostic_notes,
+        format_8ch_inventory_candidate,
+        is_8ch_model_key,
+        parse_8ch_inventory_selection_input,
+    )
     from src.utr_usb_inventory_with_output_power import _set_command_mode, _verify_usb_and_read_model_key
     from src.utr_usb_sample import (
         check_and_print_antennas,
@@ -38,7 +45,13 @@ try:
         prompt_for_port_name,
     )
 except ModuleNotFoundError:
-    from utr_8ch import format_8ch_diagnostic_notes, is_8ch_model_key
+    from utr_8ch import (
+        build_8ch_inventory_targets,
+        format_8ch_diagnostic_notes,
+        format_8ch_inventory_candidate,
+        is_8ch_model_key,
+        parse_8ch_inventory_selection_input,
+    )
     from utr_usb_inventory_with_output_power import _set_command_mode, _verify_usb_and_read_model_key
     from utr_usb_sample import (
         check_and_print_antennas,
@@ -47,6 +60,41 @@ except ModuleNotFoundError:
         parse_baud_rate_input,
         prompt_for_port_name,
     )
+
+
+def _prompt_for_8ch_inventory_targets(connected_targets):
+    """接続OKアンテナから、次段階のInventory対象候補を選択します。
+
+    この関数は選択と表示だけを行います。実機へアンテナ切替コマンドやInventoryコマンドは送信しません。
+    """
+    available_targets = build_8ch_inventory_targets(connected_targets)
+    if not available_targets:
+        print("8CH Inventoryに使用できる接続OKアンテナがありません。")
+        return []
+
+    print("")
+    print("=== 8CH Inventory候補選択（書き込みなし） ===")
+    for target in available_targets:
+        print(format_8ch_inventory_candidate(target))
+    print("複数選択できます。例: 1 / 1,2 / all")
+    print("この段階では候補選択だけを行い、アンテナ切替やInventoryは実行しません。")
+
+    while True:
+        value = input("8CH Inventoryに使用するANT番号を入力してください（例: 1 / all、終了は'q'）: ").strip()
+        try:
+            selected_targets = parse_8ch_inventory_selection_input(available_targets, value)
+        except ValueError as exc:
+            print(f"入力エラー: {exc}")
+            continue
+
+        if selected_targets is None:
+            print("8CH Inventory候補選択を中止しました。")
+            return []
+
+        print("選択された8CH Inventory候補:")
+        for target in selected_targets:
+            print(f"  {target.label}: 使用アンテナ番号 {target.usage_antenna_number_hex}")
+        return selected_targets
 
 
 def main() -> None:
@@ -93,11 +141,14 @@ def main() -> None:
         profile = get_model_profile(identified_model_key)
         connected_targets = check_and_print_antennas(ser, profile)
         connected_text = ", ".join(target.label for target in connected_targets) if connected_targets else "なし"
+        selected_targets = _prompt_for_8ch_inventory_targets(connected_targets)
+        selected_text = ", ".join(target.label for target in selected_targets) if selected_targets else "なし"
 
         print("")
         print("=== 8CH診断結果まとめ ===")
         print(f"接続OKアンテナ: {connected_text}")
-        print("次の段階で、この結果をもとに8CH用Inventory切替処理を実装します。")
+        print(f"Inventory候補として選択: {selected_text}")
+        print("次の段階で、この選択結果をもとに8CH用Inventory切替処理を実装します。")
     except KeyboardInterrupt:
         print("")
         print("中断要求を受け付けました。終了します。")
