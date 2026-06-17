@@ -11,6 +11,7 @@ from src.utr_output_power import (
     output_power_bytes_to_dbm,
     output_power_dbm_to_bytes,
     output_power_dbm_to_raw_value,
+    parse_output_power_dbm_input,
 )
 
 
@@ -54,3 +55,26 @@ def test_output_power_dbm_to_raw_value_rejects_invalid_values(value):
 def test_output_power_bytes_to_dbm_rejects_invalid_byte_length(data):
     with pytest.raises(ValueError, match="exactly 2 bytes"):
         output_power_bytes_to_dbm(data)
+
+
+@pytest.mark.parametrize("user_input", ["", " ", "q", "Q", "quit", "cancel", "  q  "])
+def test_parse_output_power_dbm_input_treats_cancel_inputs_as_none(user_input):
+    assert parse_output_power_dbm_input(user_input) is None
+
+
+@pytest.mark.parametrize(
+    ("user_input", "expected"),
+    [
+        ("24.0", Decimal("24.0")),
+        (" 10.5 ", Decimal("10.5")),
+        ("0.1", Decimal("0.1")),
+    ],
+)
+def test_parse_output_power_dbm_input_returns_decimal_for_valid_input(user_input, expected):
+    assert parse_output_power_dbm_input(user_input) == expected
+
+
+@pytest.mark.parametrize("user_input", ["abc", "24.05", "-0.1", "6553.6", "inf"])
+def test_parse_output_power_dbm_input_rejects_invalid_input(user_input):
+    with pytest.raises(ValueError):
+        parse_output_power_dbm_input(user_input)
