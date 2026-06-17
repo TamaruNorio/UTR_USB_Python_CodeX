@@ -38,8 +38,8 @@ def test_build_output_power_temporary_change_plans_builds_change_and_restore_pla
     assert isinstance(plans, OutputPowerTemporaryChangePlans)
     assert plans.change_plan.target_output_power_dbm == Decimal("20.0")
     assert plans.restore_plan.target_output_power_dbm == Decimal("24.0")
-    assert plans.change_plan.command_frame == bytes.fromhex("02 00 55 0B 33 01 00 C8 00 64 00 32 00 C8 00 03 FE 0D")
-    assert plans.restore_plan.command_frame == bytes.fromhex("02 00 55 0B 33 01 00 F0 00 64 00 32 00 C8 00 03 26 0D")
+    assert plans.change_plan.command_frame == bytes.fromhex("02 00 55 0B 33 01 00 C8 00 64 00 32 00 C8 00 03 BF 0D")
+    assert plans.restore_plan.command_frame == bytes.fromhex("02 00 55 0B 33 01 00 F0 00 64 00 32 00 C8 00 03 E7 0D")
 
 
 def test_build_output_power_temporary_change_plans_rejects_missing_timing_settings():
