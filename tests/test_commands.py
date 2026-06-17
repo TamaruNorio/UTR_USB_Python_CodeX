@@ -62,6 +62,78 @@ def test_build_buzzer_command_rejects_sound_type_out_of_range():
         commands.build_buzzer_command(sound_type=0x09)
 
 
+def test_build_write_output_setting_command_builds_command_mode_frame():
+    frame = commands.build_write_output_setting_command(
+        parameter_kind=commands.PARAMETER_KIND_COMMAND_MODE,
+        output_power_dbm="24.0",
+        carrier_transmission_time_ms=2000,
+        carrier_off_time_ms=50,
+        carrier_sense_wait_time_ms=200,
+    )
+
+    assert frame == bytes.fromhex("02 00 55 0B 33 01 00 F0 00 D0 07 32 00 C8 00 03 5A 0D")
+
+
+def test_build_write_output_setting_command_builds_auto_read_mode_frame():
+    frame = commands.build_write_output_setting_command(
+        parameter_kind=commands.PARAMETER_KIND_AUTO_READ_MODE,
+        output_power_dbm="24.0",
+        carrier_transmission_time_ms=2000,
+        carrier_off_time_ms=50,
+        carrier_sense_wait_time_ms=200,
+    )
+
+    assert frame == bytes.fromhex("02 00 55 0B 33 01 01 F0 00 D0 07 32 00 C8 00 03 5B 0D")
+
+
+def test_build_write_output_setting_command_rejects_flash_parameter_kind():
+    with pytest.raises(ValueError, match="FLASH"):
+        commands.build_write_output_setting_command(
+            parameter_kind=commands.PARAMETER_KIND_FLASH,
+            output_power_dbm="24.0",
+            carrier_transmission_time_ms=2000,
+            carrier_off_time_ms=50,
+            carrier_sense_wait_time_ms=200,
+        )
+
+
+@pytest.mark.parametrize("parameter_kind", [-1, 0x03, 0x100])
+def test_build_write_output_setting_command_rejects_unsupported_parameter_kind(parameter_kind):
+    with pytest.raises(ValueError, match="parameter_kind"):
+        commands.build_write_output_setting_command(
+            parameter_kind=parameter_kind,
+            output_power_dbm="24.0",
+            carrier_transmission_time_ms=2000,
+            carrier_off_time_ms=50,
+            carrier_sense_wait_time_ms=200,
+        )
+
+
+@pytest.mark.parametrize(
+    "field_name, kwargs",
+    [
+        ("carrier_transmission_time_ms", {"carrier_transmission_time_ms": -1}),
+        ("carrier_transmission_time_ms", {"carrier_transmission_time_ms": 0x10000}),
+        ("carrier_off_time_ms", {"carrier_off_time_ms": -1}),
+        ("carrier_off_time_ms", {"carrier_off_time_ms": 0x10000}),
+        ("carrier_sense_wait_time_ms", {"carrier_sense_wait_time_ms": -1}),
+        ("carrier_sense_wait_time_ms", {"carrier_sense_wait_time_ms": 0x10000}),
+    ],
+)
+def test_build_write_output_setting_command_rejects_invalid_u16_values(field_name, kwargs):
+    base_kwargs = {
+        "parameter_kind": commands.PARAMETER_KIND_COMMAND_MODE,
+        "output_power_dbm": "24.0",
+        "carrier_transmission_time_ms": 2000,
+        "carrier_off_time_ms": 50,
+        "carrier_sense_wait_time_ms": 200,
+    }
+    base_kwargs.update(kwargs)
+
+    with pytest.raises(ValueError, match=field_name):
+        commands.build_write_output_setting_command(**base_kwargs)
+
+
 def test_validate_defined_commands_all_true():
     results = commands.validate_defined_commands()
 
