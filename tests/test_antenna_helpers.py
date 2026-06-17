@@ -9,13 +9,16 @@ from src.utr_antenna import (
     CHECK_STATUS_CONNECTION_ERROR,
     CHECK_STATUS_OK,
     CHECK_STATUS_PARAMETER_ERROR,
+    allows_4ch_sequential_inventory,
     antenna_mask_to_numbers,
+    extract_rom_series_name,
     format_antenna_numbers,
     format_antenna_switching_setting,
     format_check_antenna_result,
     format_rom_version_info,
     get_model_profile,
     identify_model_key_from_rom,
+    identify_model_name_from_series,
     parse_antenna_switching_setting_response,
     parse_antenna_switching_setting_write_response,
     parse_check_antenna_response,
@@ -173,6 +176,47 @@ def test_parse_rom_version_response_from_real_log():
     assert rom_info.minor_version == "052"
     assert rom_info.firmware_version == "2.052"
     assert rom_info.series_name == "USM02"
+
+
+@pytest.mark.parametrize(
+    ("rom_version_text", "series_name"),
+    [
+        ("2052USM02", "USM02"),
+        ("2130USM08", "USM08"),
+    ],
+)
+def test_extract_rom_series_name(rom_version_text, series_name):
+    assert extract_rom_series_name(rom_version_text) == series_name
+
+
+@pytest.mark.parametrize(
+    ("series_name", "model_name"),
+    [
+        ("USM01", "UTR-S201"),
+        ("USM02", "UTR-SUN02-4CH"),
+        ("USM05", "UTR-SHR201"),
+        ("USM06", "UTR-SUN02V-8CH"),
+        ("USM08", "UTR-SUN02-8CH"),
+        ("USM99", "unknown"),
+    ],
+)
+def test_identify_model_name_from_series(series_name, model_name):
+    assert identify_model_name_from_series(series_name) == model_name
+
+
+@pytest.mark.parametrize(
+    ("series_name", "allowed"),
+    [
+        ("USM01", False),
+        ("USM02", True),
+        ("USM05", False),
+        ("USM06", False),
+        ("USM08", False),
+        ("USM99", False),
+    ],
+)
+def test_allows_4ch_sequential_inventory_only_for_usm02(series_name, allowed):
+    assert allows_4ch_sequential_inventory(series_name) is allowed
 
 
 def test_identify_model_key_from_rom_usm02_by_spec():
