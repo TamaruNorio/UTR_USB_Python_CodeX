@@ -136,6 +136,29 @@ def _select_sequential_8ch_inventory_targets(connected_targets):
         return selected_targets
 
 
+def _parse_restore_usage_antenna_target_input(available_targets, value):
+    """終了前に戻すANTを1つだけ選択します。"""
+    normalized = value.strip().lower()
+    if normalized in {"q", "quit", "cancel"}:
+        return None
+    if normalized == "":
+        raise ValueError("空入力です。例: 1")
+    if normalized == "all":
+        raise ValueError("戻し先は1つだけ入力してください。all は使用できません。")
+    if "," in normalized:
+        raise ValueError("戻し先は1つだけ入力してください。複数指定は使用できません。")
+
+    try:
+        selected_port = int(normalized)
+    except ValueError as exc:
+        raise ValueError("戻し先ANT番号は数値で入力してください。") from exc
+
+    target_by_port = {target.physical_port: target for target in available_targets}
+    if selected_port not in target_by_port:
+        raise ValueError("候補に表示されているANT番号を入力してください。")
+    return target_by_port[selected_port]
+
+
 def _build_and_confirm_usage_antenna_dry_runs(selected_targets):
     """選択ANTの使用アンテナ番号設定フレームをまとめて表示し、1回だけ確認します。"""
     dry_runs = [build_sun02_8ch_usage_antenna_command_dry_run(target) for target in selected_targets]
@@ -185,7 +208,7 @@ def _send_usage_antenna_setting(ser: serial.Serial, dry_run) -> bool:
     return False
 
 
-def _run_sequential_inventory_loop(ser: serial.Serial, dry_runs) -> tuple[int, float, int, dict[str, int], dict[str, int], dict[str, int]]:
+def _run_sequential_inventory_loop(ser: serial.Serial, dry_runs) -> tuple[int, float, int, dict[str, int], dict[str, int], dict[str, int], str | None]:
     """選択ANTを順番に切り替えながらInventoryを実行します。"""
     total_inventory_attempts = 0
     total_read_time = 0.0
@@ -193,6 +216,7 @@ def _run_sequential_inventory_loop(ser: serial.Serial, dry_runs) -> tuple[int, f
     ant_read_counts = {dry_run.target.label: 0 for dry_run in dry_runs}
     ant_inventory_counts = {dry_run.target.label: 0 for dry_run in dry_runs}
     ant_skip_counts = {dry_run.target.label: 0 for dry_run in dry_runs}
+    last_used_antenna_label = None
 
     buzzer_enabled = ask_yes_no("読み取り結果をブザーで通知しますか？ [y/N]: ", default=False)
     mask_pc_uii_display = ask_yes_no("PC+UIIを画面表示でマスクしますか？ [y/N]: ", default=False)
@@ -229,6 +253,7 @@ def _run_sequential_inventory_loop(ser: serial.Serial, dry_runs) -> tuple[int, f
                 if not _send_usage_antenna_setting(ser, dry_run):
                     ant_skip_counts[label] += 1
                     continue
+                last_used_antenna_label = label
 
                 print("")
                 print(f"--- {label} Inventory ---")
@@ -295,7 +320,66 @@ def _run_sequential_inventory_loop(ser: serial.Serial, dry_runs) -> tuple[int, f
         ant_read_counts,
         ant_inventory_counts,
         ant_skip_counts,
+        last_used_antenna_label,
     )
+
+
+def _restore_usage_antenna_before_exit(ser: serial.Serial, selected_targets, last_used_antenna_label: str | None) -> None:
+    """終了前に使用アンテナ番号を選択ANTのいずれかへ戻します。"""
+    last_used_text = last_used_antenna_label if last_used_antenna_label is not None else "なし"
+    print("")
+    print(f"最後に使用したANT: {last_used_text}")
+    if not ask_yes_no("終了前に使用アンテナ番号を戻しますか？ [y/N]: ", default=False):
+        print("終了前の使用アンテナ番号戻しは行いません。")
+        return
+
+    print("")
+    print("=== 終了前に戻す使用アンテナ番号の選択 ===")
+    print("今回選択した接続OKアンテナだけを候補として表示します。")
+    for target in selected_targets:
+        print(format_8ch_inventory_candidate(target))
+    print("選択例: 1 / 3 / q")
+    print("戻し先は1つだけ入力してください。all と複数指定は使用できません。")
+
+    while True:
+        value = input("終了前に戻すANT番号を入力してください（中止は'q'）: ").strip()
+        try:
+            restore_target = _parse_restore_usage_antenna_target_input(selected_targets, value)
+        except ValueError as exc:
+            print(f"入力エラー: {exc}")
+            continue
+
+        if restore_target is None:
+            print("終了前の使用アンテナ番号戻しを中止しました。")
+            return
+        break
+
+    dry_run = build_sun02_8ch_usage_antenna_command_dry_run(restore_target)
+    print("")
+    print("=== 終了前 使用アンテナ番号戻し dry-run ===")
+    for line in format_8ch_usage_antenna_command_dry_run(dry_run):
+        print(line)
+    print("ここで送信するのはコマンドモード用パラメータです。FLASHは変更しません。")
+    print("送信出力、周波数、UHF_SET_INVENTORY_PARAMは変更しません。")
+    if not ask_yes_no("この内容で使用アンテナ番号を戻しますか？ [y/N]: ", default=False):
+        print("終了前の使用アンテナ番号戻しを中止しました。")
+        return
+
+    print("")
+    print(f"--- 終了前 使用アンテナ番号戻し: {restore_target.label} ---")
+    print(f"送信フレーム: {dry_run.frame_hex}")
+    response = communicate(ser, dry_run.frame)
+    if _is_ack(response):
+        print(f"戻し完了: {restore_target.label} / 使用アンテナ番号 {restore_target.usage_antenna_number_hex}")
+        return
+
+    if _is_nack(response):
+        print("戻し失敗: NACK")
+        print_nack_message(response)
+        return
+
+    print("戻し失敗: ACK/NACKなし")
+    print(f"Raw: {response.hex().upper()}")
 
 
 def main() -> None:
@@ -353,6 +437,7 @@ def main() -> None:
             ant_read_counts,
             ant_inventory_counts,
             ant_skip_counts,
+            last_used_antenna_label,
         ) = _run_sequential_inventory_loop(ser, dry_runs)
 
         print("")
@@ -369,6 +454,7 @@ def main() -> None:
                 f"/ Inventory実行 {ant_inventory_counts[label]} 回 "
                 f"/ スキップ {ant_skip_counts[label]} 回"
             )
+        _restore_usage_antenna_before_exit(ser, selected_targets, last_used_antenna_label)
     except KeyboardInterrupt:
         print("")
         print("中断要求を受け付けました。終了します。")
