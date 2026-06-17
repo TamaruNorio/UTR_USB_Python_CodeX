@@ -7,7 +7,8 @@
 通常実行時は、送信出力一時変更つきInventoryフローを起動します。
 
 ポイント:
-- 旧実装をこのモジュールの globals() に exec するため、既存テストの monkeypatch 互換性を維持します。
+- 旧実装をこのモジュールの globals() に読み込むため、既存テストの monkeypatch 互換性を維持します。
+- legacy側の `if __name__ == '__main__': main()` は実行しません。
 - 実行入口の main() だけを新しいInventoryフローに差し替えます。
 """
 
@@ -16,15 +17,16 @@ from __future__ import annotations
 from pathlib import Path
 
 _LEGACY_PATH = Path(__file__).with_name("utr_usb_sample_legacy.py")
-_ORIGINAL_NAME = globals().get("__name__", "__main__")
+_LEGACY_SOURCE = _LEGACY_PATH.read_text(encoding="utf-8")
 
-# このファイルを直接実行した場合でも、legacy側の if __name__ == "__main__" が
-# 誤って動かないよう、legacy読み込み中だけ __name__ を退避します。
-globals()["__name__"] = "utr_usb_sample_legacy_loaded"
-try:
-    exec(compile(_LEGACY_PATH.read_text(encoding="utf-8"), str(_LEGACY_PATH), "exec"), globals())
-finally:
-    globals()["__name__"] = _ORIGINAL_NAME
+# legacyファイル末尾の直接実行ブロックだけを外して、このモジュールへ読み込みます。
+# __name__ を変更しないため、dataclassや既存テストのmonkeypatch互換性を維持できます。
+for _guard in ("\nif __name__ == '__main__':", '\nif __name__ == "__main__":'):
+    if _guard in _LEGACY_SOURCE:
+        _LEGACY_SOURCE = _LEGACY_SOURCE.rsplit(_guard, maxsplit=1)[0]
+        break
+
+exec(compile(_LEGACY_SOURCE, str(_LEGACY_PATH), "exec"), globals())
 
 
 def main() -> None:
