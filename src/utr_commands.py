@@ -14,10 +14,12 @@
 
 try:
     from src.utr_protocol import CR, ETX, STX, calculate_sum_value
+    from src.utr_output_power import OutputPowerValue, output_power_dbm_to_bytes
 except ModuleNotFoundError:
     # `py .\utr_usb_sample.py` を src フォルダ内から直接実行した場合でも、
     # utr_commands.py が読み込めるようにするための互換処理です。
     from utr_protocol import CR, ETX, STX, calculate_sum_value
+    from utr_output_power import OutputPowerValue, output_power_dbm_to_bytes
 
 
 # src/utr_usb_sample.py の COMMANDS を安全に複製した固定コマンドです。
@@ -47,6 +49,20 @@ BUZZER_SOUND_NACK = 0x02     # NACK時に使う候補音。実音は実機確認
 PARAMETER_KIND_COMMAND_MODE = 0x00
 PARAMETER_KIND_AUTO_READ_MODE = 0x01
 PARAMETER_KIND_FLASH = 0x02
+
+# リーダライタ設定コマンドの詳細コマンドです。
+DETAIL_READER_SETTING_READ = 0x43
+DETAIL_READER_SETTING_WRITE = 0x33
+
+# 出力設定のサブコマンドです。
+OUTPUT_SETTING_PARAMETER = 0x01
+
+# 初期実装で許可する出力設定書き込み先です。
+# FLASHデータは、将来の明示設計までは生成対象外にします。
+OUTPUT_SETTING_WRITABLE_PARAMETER_KINDS = {
+    PARAMETER_KIND_COMMAND_MODE,
+    PARAMETER_KIND_AUTO_READ_MODE,
+}
 
 
 def get_command(command_name: str) -> bytes:
@@ -80,6 +96,15 @@ def _validate_byte_value(value: int, name: str) -> None:
     """1バイト値として扱える範囲か確認します。"""
     if not 0x00 <= value <= 0xFF:
         raise ValueError(f"{name} must be in range 0x00-0xFF")
+
+
+def _u16_little_endian(value: int, name: str) -> bytes:
+    """符号なし16bit整数を little-endian の2バイトへ変換します。"""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{name} must be an integer")
+    if not 0x0000 <= value <= 0xFFFF:
+        raise ValueError(f"{name} must be in range 0-65535")
+    return value.to_bytes(2, byteorder="little", signed=False)
 
 
 def build_frame(command_code: int, data: bytes, address: int = 0x00) -> bytes:
@@ -156,7 +181,7 @@ def build_read_antenna_switching_setting_command(parameter_kind: int = PARAMETER
         設定値の書き込みは行いません。
     """
     _validate_byte_value(parameter_kind, "parameter_kind")
-    return build_frame(0x55, bytes([0x43, 0x00, parameter_kind]))
+    return build_frame(0x55, bytes([DETAIL_READER_SETTING_READ, 0x00, parameter_kind]))
 
 
 def build_check_antenna_command(antenna_number: int) -> bytes:
@@ -176,6 +201,51 @@ def build_check_antenna_command(antenna_number: int) -> bytes:
     """
     _validate_byte_value(antenna_number, "antenna_number")
     return build_frame(0x55, bytes([0x44, antenna_number]))
+
+
+def build_write_output_setting_command(
+    parameter_kind: int,
+    output_power_dbm: OutputPowerValue,
+    carrier_transmission_time_ms: int,
+    carrier_off_time_ms: int,
+    carrier_sense_wait_time_ms: int,
+) -> bytes:
+    """出力設定の書き込みコマンドフレームを生成します。
+
+    この関数はフレームを生成するだけです。
+    実機への送信、UI接続、FLASH保存は行いません。
+
+    初期実装では、FLASHデータ向けのフレーム生成を禁止します。
+    一時変更で使う候補として、コマンドモード用パラメータと
+    自動読み取りモード用パラメータだけを許可します。
+
+    Args:
+        parameter_kind:
+            0x00 = コマンドモード用パラメータ
+            0x01 = 自動読み取りモード用パラメータ
+            0x02 = FLASHデータ。ここでは禁止します。
+        output_power_dbm: RF送信出力レベル。例: 24.0。
+        carrier_transmission_time_ms: キャリア送信時間[msec]。
+        carrier_off_time_ms: キャリア休止時間[msec]。
+        carrier_sense_wait_time_ms: キャリアセンス待ち時間[msec]。
+
+    Returns:
+        送信用フレーム。
+
+    Raises:
+        ValueError: FLASHデータ指定、範囲外値、変換できない送信出力値の場合。
+    """
+    if parameter_kind not in OUTPUT_SETTING_WRITABLE_PARAMETER_KINDS:
+        raise ValueError("parameter_kind must be command-mode or auto-read-mode; FLASH is not allowed")
+
+    data = (
+        bytes([DETAIL_READER_SETTING_WRITE, OUTPUT_SETTING_PARAMETER, parameter_kind])
+        + output_power_dbm_to_bytes(output_power_dbm)
+        + _u16_little_endian(carrier_transmission_time_ms, "carrier_transmission_time_ms")
+        + _u16_little_endian(carrier_off_time_ms, "carrier_off_time_ms")
+        + _u16_little_endian(carrier_sense_wait_time_ms, "carrier_sense_wait_time_ms")
+    )
+    return build_frame(0x55, data)
 
 
 def build_write_antenna_switching_setting_command(
@@ -211,7 +281,7 @@ def build_write_antenna_switching_setting_command(
     _validate_byte_value(antenna_mask, "antenna_mask")
 
     flags = (0x80 if antenna_id_output_enabled else 0x00) | (switching_mode & 0x03)
-    return build_frame(0x55, bytes([0x33, 0x00, parameter_kind, flags, antenna_mask, 0x00, 0x00, 0x00]))
+    return build_frame(0x55, bytes([DETAIL_READER_SETTING_WRITE, 0x00, parameter_kind, flags, antenna_mask, 0x00, 0x00, 0x00]))
 
 
 def validate_defined_commands() -> dict[str, bool]:
