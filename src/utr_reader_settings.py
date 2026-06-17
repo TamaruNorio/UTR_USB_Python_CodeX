@@ -8,8 +8,16 @@ from __future__ import annotations
 from typing import Any
 
 try:
+    from src.utr_output_power_readout import (
+        format_output_power_timing_settings,
+        parse_output_power_timing_settings_from_data,
+    )
     from src.utr_protocol import ACK, CR, ETX, STX, CMD_LOCATION, calculate_sum_value, parse_output_power_dbm
 except ModuleNotFoundError:
+    from utr_output_power_readout import (
+        format_output_power_timing_settings,
+        parse_output_power_timing_settings_from_data,
+    )
     from utr_protocol import ACK, CR, ETX, STX, CMD_LOCATION, calculate_sum_value, parse_output_power_dbm
 
 
@@ -63,12 +71,14 @@ def parse_output_power_setting_response(frame: bytes) -> dict[str, Any]:
         min_data_length=5,
     )
     output_power_bytes = data[3:5]
+    timing_settings = parse_output_power_timing_settings_from_data(data)
     return {
         "detail_command": data[0],
         "parameter_kind": data[1],
         "raw_data_hex": data.hex(" ").upper(),
         "raw_value_hex": output_power_bytes.hex(" ").upper(),
         "output_power_dbm": parse_output_power_dbm(output_power_bytes),
+        "timing_settings": timing_settings,
     }
 
 
@@ -97,6 +107,7 @@ def format_output_power_setting(parsed: dict[str, Any]) -> list[str]:
     """Format parsed output power setting for display."""
     return [
         f"送信出力値: {parsed['output_power_dbm']} dBm",
+        *format_output_power_timing_settings(parsed.get("timing_settings")),
         f"送信出力Raw: {parsed['raw_data_hex']}",
     ]
 
