@@ -11,6 +11,7 @@ from src.utr_reader_settings import (
     parse_frequency_setting_response,
     parse_output_power_setting_response,
 )
+from src.utr_output_power_readout import OutputPowerTimingSettings
 
 
 def test_parse_output_power_setting_response_reads_dbm_and_raw_hex():
@@ -23,7 +24,28 @@ def test_parse_output_power_setting_response_reads_dbm_and_raw_hex():
     assert parsed["output_power_dbm"] == 24.0
     assert parsed["raw_value_hex"] == "F0 00"
     assert parsed["raw_data_hex"] == "43 01 00 F0 00"
-    assert "送信出力値: 24.0 dBm" in format_output_power_setting(parsed)
+    assert parsed["timing_settings"] is None
+    formatted = format_output_power_setting(parsed)
+    assert "送信出力値: 24.0 dBm" in formatted
+    assert "キャリア関連時間: レスポンスに含まれていないため表示しません" in formatted
+
+
+def test_parse_output_power_setting_response_reads_timing_values_when_available():
+    response = bytes.fromhex("02 00 30 0B 43 01 00 F0 00 D0 07 32 00 C8 00 03 45 0D")
+
+    parsed = parse_output_power_setting_response(response)
+
+    assert parsed["output_power_dbm"] == 24.0
+    assert parsed["timing_settings"] == OutputPowerTimingSettings(
+        carrier_transmission_time_ms=2000,
+        carrier_off_time_ms=50,
+        carrier_sense_wait_time_ms=200,
+    )
+    formatted = format_output_power_setting(parsed)
+    assert "キャリア送信時間: 2000 msec" in formatted
+    assert "キャリア休止時間: 50 msec" in formatted
+    assert "キャリアセンス待ち時間: 200 msec" in formatted
+    assert "送信出力Raw: 43 01 00 F0 00 D0 07 32 00 C8 00" in formatted
 
 
 def test_parse_frequency_setting_response_reads_channel_and_frequency():
