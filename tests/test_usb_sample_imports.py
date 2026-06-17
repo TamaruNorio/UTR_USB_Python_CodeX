@@ -50,6 +50,26 @@ def test_inventory_antenna_selection_prompt_explains_q_keeps_current_setting():
     assert "現在のコマンドモード用アンテナ設定でInventoryを続行します。" in prompt
 
 
+def test_pre_inventory_reader_settings_failures_do_not_stop_inventory(monkeypatch, capsys):
+    calls = []
+
+    def fake_communicate(_ser, command):
+        calls.append(command)
+        return b""
+
+    monkeypatch.setattr(utr_usb_sample, "communicate", fake_communicate)
+
+    utr_usb_sample.read_and_print_pre_inventory_reader_settings(SimpleNamespace())
+
+    output = capsys.readouterr().out
+    assert calls == [
+        utr_usb_sample.COMMANDS["UHF_READ_OUTPUT_POWER"],
+        utr_usb_sample.COMMANDS["UHF_READ_FREQ_CH"],
+    ]
+    assert "送信出力設定読み取りに失敗しました。Inventoryは継続します。" in output
+    assert "周波数設定読み取りに失敗しました。Inventoryは継続します。" in output
+
+
 def _rom_info(series_name):
     return RomVersionInfo(
         raw_text=f"2052{series_name}",
