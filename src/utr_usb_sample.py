@@ -72,7 +72,13 @@ from   serial.tools import list_ports
 from   typing       import List, Optional, Tuple
 try:
     from src.utr_inventory import format_inventory_param_response, parse_inventory_param_response
-    from src.utr_protocol import format_nack_message, parse_output_power_dbm
+    from src.utr_protocol import format_nack_message
+    from src.utr_reader_settings import (
+        format_frequency_setting,
+        format_output_power_setting,
+        parse_frequency_setting_response,
+        parse_output_power_setting_response,
+    )
     from src.utr_result_export import build_result_summary, save_results_to_csv, save_results_to_json
     from src.utr_serial_ports import format_port_info, find_port_by_user_input, is_quit_input
     from src.utr_commands import (
@@ -104,7 +110,13 @@ try:
     )
 except ModuleNotFoundError:
     from utr_inventory import format_inventory_param_response, parse_inventory_param_response
-    from utr_protocol import format_nack_message, parse_output_power_dbm
+    from utr_protocol import format_nack_message
+    from utr_reader_settings import (
+        format_frequency_setting,
+        format_output_power_setting,
+        parse_frequency_setting_response,
+        parse_output_power_setting_response,
+    )
     from utr_result_export import build_result_summary, save_results_to_csv, save_results_to_json
     from utr_serial_ports import format_port_info, find_port_by_user_input, is_quit_input
     from utr_commands import (
@@ -1175,6 +1187,44 @@ def finish_inventory_session(
     close_serial_safely(ser)
 
 
+def read_and_print_pre_inventory_reader_settings(ser: serial.Serial) -> None:
+    """Inventory前に送信出力設定と周波数設定を読み取り表示します。"""
+    print("")
+    print("=== Inventory前のリーダライタ設定（読み取りのみ） ===")
+
+    result = communicate(ser, COMMANDS["UHF_READ_OUTPUT_POWER"])
+    if re.match(STX + b"." + ACK, result):
+        try:
+            parsed = parse_output_power_setting_response(result)
+            for line in format_output_power_setting(parsed):
+                print(line)
+        except ValueError as exc:
+            print(f"送信出力設定読み取りに失敗しました。Inventoryは継続します。理由: {exc}")
+            print("Raw:", result.hex().upper())
+    elif re.match(STX + b"." + NACK, result):
+        print_nack_message(result)
+        print("送信出力設定読み取りに失敗しました。Inventoryは継続します。")
+    else:
+        print("送信出力設定読み取りに失敗しました。Inventoryは継続します。")
+        print("Raw:", result.hex().upper())
+
+    result = communicate(ser, COMMANDS["UHF_READ_FREQ_CH"])
+    if re.match(STX + b"." + ACK, result):
+        try:
+            parsed = parse_frequency_setting_response(result)
+            for line in format_frequency_setting(parsed):
+                print(line)
+        except ValueError as exc:
+            print(f"周波数設定読み取りに失敗しました。Inventoryは継続します。理由: {exc}")
+            print("Raw:", result.hex().upper())
+    elif re.match(STX + b"." + NACK, result):
+        print_nack_message(result)
+        print("周波数設定読み取りに失敗しました。Inventoryは継続します。")
+    else:
+        print("周波数設定読み取りに失敗しました。Inventoryは継続します。")
+        print("Raw:", result.hex().upper())
+
+
 def run_optional_antenna_check(
     ser: serial.Serial,
     rom_info: RomVersionInfo | None = None,
@@ -1439,37 +1489,8 @@ def main():
         ser.close()
         sys.exit(1)
 
-    # --- 出力/周波数の読み取り ---
-    # 出力電力の読み取り
-    result = communicate(ser, COMMANDS['UHF_READ_OUTPUT_POWER'])
-    if re.match(STX + b'.' + ACK, result):
-        # 応答から出力レベルを抽出し、dBmに変換して表示
-        print("UHF_READ_OUTPUT_POWER response:", result.hex().upper())
-        output_power_level = parse_output_power_dbm(result[7:9])
-        print("送信出力値：", output_power_level, "dBm")
-    elif re.match(STX + b'.' + NACK, result):
-        print_nack_message(result)
-    else:
-        print("通信エラー（UHF_READ_OUTPUT_POWER）")
-        print(result.hex())
-        ser.close()
-        sys.exit(1)
-
-    # 周波数チャンネルの読み取り
-    result = communicate(ser, COMMANDS['UHF_READ_FREQ_CH'])
-    if re.match(STX + b'.' + ACK, result):
-        # 応答からチャンネル番号を抽出し、対応する周波数を表示
-        output_ch = result[7] # 8バイト目がチャンネル番号
-        print("チャンネル番号：", output_ch, "ch")
-        if 1 <= output_ch <= len(OUTPUT_CH_FREQ_LIST):
-            print("送信周波数：", OUTPUT_CH_FREQ_LIST[output_ch-1], " MHz")
-    elif re.match(STX + b'.' + NACK, result):
-        print_nack_message(result)
-    else:
-        print("通信エラー（UHF_READ_FREQ_CH）")
-        print(result.hex())
-        ser.close()
-        sys.exit(1)
+    # --- Inventory前のリーダライタ設定確認（読み取りのみ） ---
+    read_and_print_pre_inventory_reader_settings(ser)
 
     # --- インベントリパラメータ取得/設定（任意） ---
     # インベントリパラメータ取得コマンドを送信
