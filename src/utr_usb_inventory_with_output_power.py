@@ -45,6 +45,7 @@ try:
         _read_current_output_power_setting,
         _send_output_power_frame,
     )
+    from src.utr_privacy import get_or_create_masked_pc_uii_id
     from src.utr_usb_sample import (
         ACK,
         COMMANDS,
@@ -89,6 +90,7 @@ except ModuleNotFoundError:
         _read_current_output_power_setting,
         _send_output_power_frame,
     )
+    from utr_privacy import get_or_create_masked_pc_uii_id
     from utr_usb_sample import (
         ACK,
         COMMANDS,
@@ -255,11 +257,17 @@ def _run_inventory_loop(
     total_iterations = 0
     pc_uii_count_dict: dict = {}
     inventory_result_item_dict: dict = {}
+    export_mask_map: dict[str, str] = {}
 
     buzzer_enabled = ask_yes_no("読み取り結果をブザーで通知しますか？ [y/N]: ", default=False)
     mask_pc_uii_display = ask_yes_no("PC+UIIを画面表示でマスクしますか？ [y/N]: ", default=False)
+    mask_pc_uii_export = ask_yes_no("結果ファイルでもPC+UIIをマスクしますか？ [y/N]: ", default=False)
     if mask_pc_uii_display:
-        print("PC+UIIは画面表示のみ省略します。集計キーと結果ファイルには実値を保持します。")
+        print("PC+UIIは画面表示で省略します。")
+    if mask_pc_uii_export:
+        print("結果ファイルのPC+UIIは MASKED_PC_UII_001 のような仮名IDで保存します。")
+    else:
+        print("結果ファイルには実PC+UIIを保持します。共有時は必ずマスクしてください。")
 
     while True:
         try:
@@ -312,19 +320,24 @@ def _run_inventory_loop(
 
                     for pc_uii, rssi_value in zip(pc_uii_list, rssi_list):
                         pc_uii_hex = pc_uii.hex().upper()
+                        export_pc_uii = (
+                            get_or_create_masked_pc_uii_id(pc_uii_hex, export_mask_map)
+                            if mask_pc_uii_export
+                            else pc_uii_hex
+                        )
                         print(f"PC+UII: {format_pc_uii_for_display(pc_uii_hex, mask=mask_pc_uii_display)}")
                         print(f"RSSI: {rssi_value:.1f} dBm")
-                        pc_uii_count_dict[pc_uii_hex] = pc_uii_count_dict.get(pc_uii_hex, 0) + 1
+                        pc_uii_count_dict[export_pc_uii] = pc_uii_count_dict.get(export_pc_uii, 0) + 1
                         antenna_number = inventory_target.number if inventory_target is not None else None
                         antenna_label = inventory_target.label if inventory_target is not None else None
                         antenna_description = inventory_target.description if inventory_target is not None else None
-                        item_key = (pc_uii_hex, antenna_number, antenna_label, antenna_description)
+                        item_key = (export_pc_uii, antenna_number, antenna_label, antenna_description)
                         if item_key not in inventory_result_item_dict:
                             inventory_result_item_dict[item_key] = {
                                 "antenna_number": antenna_number,
                                 "antenna_label": antenna_label,
                                 "antenna_description": antenna_description,
-                                "pc_uii": pc_uii_hex,
+                                "pc_uii": export_pc_uii,
                                 "read_count": 0,
                             }
                         inventory_result_item_dict[item_key]["read_count"] += 1
