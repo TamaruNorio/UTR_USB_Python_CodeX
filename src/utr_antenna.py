@@ -165,6 +165,9 @@ ROM_SERIES_TO_MODEL_KEY_BY_SPEC: dict[str, str] = {
     "USM08": "UTR-SUN02-8CH",
 }
 
+MODEL_UNKNOWN = "unknown"
+FOUR_CH_SEQUENTIAL_INVENTORY_SERIES_NAME = "USM02"
+
 
 ANTENNA_MODEL_PROFILES: dict[str, AntennaModelProfile] = {
     "UTR-S201": AntennaModelProfile(
@@ -231,6 +234,21 @@ def get_model_profile(model_key: str) -> AntennaModelProfile:
         raise ValueError(f"unknown model_key: {model_key}") from exc
 
 
+def extract_rom_series_name(rom_version_text: str) -> str:
+    """ROMバージョン文字列から5byteのROMシリーズ名を抽出します。"""
+    return rom_version_text[4:9]
+
+
+def identify_model_name_from_series(series_name: str) -> str:
+    """ROMシリーズ名から仕様書上の機種名を返します。"""
+    return ROM_SERIES_TO_MODEL_KEY_BY_SPEC.get(series_name, MODEL_UNKNOWN)
+
+
+def allows_4ch_sequential_inventory(series_name: str) -> bool:
+    """4CH向けアンテナ順次Inventoryを許可するROMシリーズ名か判定します。"""
+    return series_name == FOUR_CH_SEQUENTIAL_INVENTORY_SERIES_NAME
+
+
 def parse_rom_version_response(frame: bytes) -> RomVersionInfo:
     """ROMバージョン読み取りレスポンスを解析します。
 
@@ -258,7 +276,7 @@ def parse_rom_version_response(frame: bytes) -> RomVersionInfo:
         raw_text=raw_text,
         major_version=raw_text[0],
         minor_version=raw_text[1:4],
-        series_name=raw_text[4:9],
+        series_name=extract_rom_series_name(raw_text),
     )
 
 
@@ -274,7 +292,10 @@ def identify_model_key_from_rom(rom_info: RomVersionInfo) -> str | None:
         ここでは「推定」ではなく、既知のROMシリーズ名コードと仕様書対応表の照合を行います。
         未知コードの場合は断定しません。
     """
-    return ROM_SERIES_TO_MODEL_KEY_BY_SPEC.get(rom_info.series_name)
+    model_name = identify_model_name_from_series(rom_info.series_name)
+    if model_name == MODEL_UNKNOWN:
+        return None
+    return model_name
 
 
 def format_rom_version_info(rom_info: RomVersionInfo, identified_model_key: str | None = None) -> list[str]:

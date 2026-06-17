@@ -89,6 +89,7 @@ try:
         AntennaModelProfile,
         AntennaSwitchingSetting,
         RomVersionInfo,
+        allows_4ch_sequential_inventory,
         format_antenna_switching_setting,
         format_check_antenna_result,
         format_antenna_numbers,
@@ -120,6 +121,7 @@ except ModuleNotFoundError:
         AntennaModelProfile,
         AntennaSwitchingSetting,
         RomVersionInfo,
+        allows_4ch_sequential_inventory,
         format_antenna_switching_setting,
         format_check_antenna_result,
         format_antenna_numbers,
@@ -1193,6 +1195,12 @@ def run_optional_antenna_check(
         return None
 
     identified_model_key = identify_model_key_from_rom(rom_info) if rom_info is not None else None
+    if rom_info is not None and not allows_4ch_sequential_inventory(rom_info.series_name):
+        if identified_model_key in {"UTR-SUN02V-8CH", "UTR-SUN02-8CH"}:
+            print("8CH機では4CH向けアンテナ切替処理を使用しません。8CHアンテナ制御は未対応です。")
+        else:
+            print("このROMシリーズ名では4CH向けアンテナ切替処理を使用しません。")
+        return None
 
     if identified_model_key is not None:
         profile = get_model_profile(identified_model_key)

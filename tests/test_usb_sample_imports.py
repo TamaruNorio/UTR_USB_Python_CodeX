@@ -5,8 +5,10 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from src import utr_usb_sample
-from src.utr_antenna import AntennaCheckTarget
+from src.utr_antenna import AntennaCheckTarget, RomVersionInfo
 
 
 def test_utr_usb_sample_imports_format_antenna_numbers():
@@ -46,6 +48,62 @@ def test_inventory_antenna_selection_prompt_explains_q_keeps_current_setting():
     assert "終了は'q'" not in prompt
     assert "アンテナを指定しない場合は q を入力してください。" in prompt
     assert "現在のコマンドモード用アンテナ設定でInventoryを続行します。" in prompt
+
+
+def _rom_info(series_name):
+    return RomVersionInfo(
+        raw_text=f"2052{series_name}",
+        major_version="2",
+        minor_version="052",
+        series_name=series_name,
+    )
+
+
+def test_run_optional_antenna_check_allows_usm02_before_profile_selection(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(utr_usb_sample, "ask_yes_no", lambda *args, **kwargs: True)
+
+    def fake_get_model_profile(model_key):
+        calls.append(("profile", model_key))
+        return SimpleNamespace(
+            key="UTR-SUN02-4CH",
+            display_name="UTR-SUN02-4CH",
+            note="4CH",
+            supports_antenna_switching_setting=False,
+        )
+
+    monkeypatch.setattr(utr_usb_sample, "get_model_profile", fake_get_model_profile)
+    monkeypatch.setattr(utr_usb_sample, "check_and_print_antennas", lambda *args, **kwargs: [])
+
+    utr_usb_sample.run_optional_antenna_check(SimpleNamespace(), _rom_info("USM02"))
+
+    assert calls == [("profile", "UTR-SUN02-4CH")]
+
+
+@pytest.mark.parametrize("series_name", ["USM01", "USM05", "USM06", "USM08", "USM99"])
+def test_run_optional_antenna_check_blocks_non_usm02_before_device_commands(monkeypatch, capsys, series_name):
+    calls = []
+
+    monkeypatch.setattr(utr_usb_sample, "ask_yes_no", lambda *args, **kwargs: True)
+    monkeypatch.setattr(utr_usb_sample, "get_model_profile", lambda *args, **kwargs: calls.append("profile"))
+    monkeypatch.setattr(utr_usb_sample, "check_and_print_antennas", lambda *args, **kwargs: calls.append("check"))
+    monkeypatch.setattr(
+        utr_usb_sample,
+        "read_and_print_antenna_switching_setting",
+        lambda *args, **kwargs: calls.append("read"),
+    )
+
+    selection = utr_usb_sample.run_optional_antenna_check(SimpleNamespace(), _rom_info(series_name))
+
+    output = capsys.readouterr().out
+    assert selection is None
+    assert calls == []
+    if series_name in {"USM06", "USM08"}:
+        assert "8CH機では4CH向けアンテナ切替処理を使用しません。" in output
+        assert "8CHアンテナ制御は未対応です。" in output
+    else:
+        assert "このROMシリーズ名では4CH向けアンテナ切替処理を使用しません。" in output
 
 
 def test_restore_antenna_setting_safely_reports_restore_failure(monkeypatch, capsys):
