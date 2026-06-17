@@ -3,8 +3,8 @@
 
 """UTR-SUN02 8CH機向けの補助関数。
 
-このモジュールは、8CH機の機種判定、表示文言、Inventory用アンテナ選択の
-準備処理を扱います。
+このモジュールは、8CH機の機種判定、表示文言、Inventory用アンテナ選択、
+使用アンテナ番号設定コマンドのdry-run生成を扱います。
 
 重要:
 - 実機通信は行いません。
@@ -20,10 +20,14 @@ from typing import Optional
 
 try:
     from src.utr_antenna import AntennaCheckTarget
+    from src.utr_commands import PARAMETER_KIND_COMMAND_MODE, build_frame
 except ModuleNotFoundError:
     from utr_antenna import AntennaCheckTarget
+    from utr_commands import PARAMETER_KIND_COMMAND_MODE, build_frame
 
 EIGHT_CH_MODEL_KEYS = frozenset({"UTR-SUN02V-8CH", "UTR-SUN02-8CH"})
+DETAIL_USAGE_ANTENNA_NUMBER_WRITE = 0x38
+SUN02_8CH_EXTERNAL_ANTENNA_NUMBER = 0x00
 
 # UTR-SUN02-8CHの使用アンテナ番号系です。
 # UHF_CheckAntennaの番号 00h〜07h はANT1〜ANT8ですが、使用アンテナ番号系では
@@ -65,6 +69,29 @@ class EightChInventoryTarget:
         return f"{self.usage_antenna_number:02X}h"
 
 
+@dataclass(frozen=True)
+class EightChUsageAntennaCommandDryRun:
+    """8CH使用アンテナ番号設定コマンドのdry-run情報。"""
+
+    target: EightChInventoryTarget
+    parameter_kind: int
+    internal_antenna_number: int
+    external_antenna_number: int
+    frame: bytes
+
+    @property
+    def internal_antenna_number_hex(self) -> str:
+        return f"{self.internal_antenna_number:02X}h"
+
+    @property
+    def external_antenna_number_hex(self) -> str:
+        return f"{self.external_antenna_number:02X}h"
+
+    @property
+    def frame_hex(self) -> str:
+        return self.frame.hex(" ").upper()
+
+
 def is_8ch_model_key(model_key: str | None) -> bool:
     """仕様書照合機種キーが8CH機か判定します。"""
     return model_key in EIGHT_CH_MODEL_KEYS
@@ -98,6 +125,17 @@ def check_antenna_number_to_physical_port(check_antenna_number: int) -> int:
     return check_antenna_number + 1
 
 
+def physical_port_to_sun02_8ch_internal_antenna_number(physical_port: int) -> int:
+    """UTR-SUN02-8CHの物理ポート番号を内部アンテナ番号へ変換します。
+
+    ANT1=0、ANT3=2、ANT8=7です。
+    外部アンテナ番号はUTR-SUN02-8CHでは0固定です。
+    """
+    if not 1 <= physical_port <= 8:
+        raise ValueError("physical_port must be in range 1-8")
+    return physical_port - 1
+
+
 def physical_port_to_sun02_8ch_usage_antenna_number(physical_port: int) -> int:
     """UTR-SUN02-8CHの物理ポート番号を使用アンテナ番号系へ変換します。"""
     try:
@@ -120,6 +158,47 @@ def build_8ch_inventory_target(check_target: AntennaCheckTarget) -> EightChInven
 def build_8ch_inventory_targets(check_targets: list[AntennaCheckTarget]) -> list[EightChInventoryTarget]:
     """接続OKだったUHF_CheckAntenna対象を、8CH Inventory候補へ変換します。"""
     return [build_8ch_inventory_target(target) for target in check_targets]
+
+
+def build_sun02_8ch_usage_antenna_command_dry_run(
+    target: EightChInventoryTarget,
+    parameter_kind: int = PARAMETER_KIND_COMMAND_MODE,
+) -> EightChUsageAntennaCommandDryRun:
+    """UTR-SUN02-8CHの使用アンテナ番号設定コマンドをdry-run生成します。
+
+    この関数はフレームを生成するだけで、実機送信は行いません。
+    UTR-SUN02-8CHでは外部アンテナ番号を00h固定にします。
+    """
+    internal_antenna_number = physical_port_to_sun02_8ch_internal_antenna_number(target.physical_port)
+    external_antenna_number = SUN02_8CH_EXTERNAL_ANTENNA_NUMBER
+    frame = build_frame(
+        0x55,
+        bytes([
+            DETAIL_USAGE_ANTENNA_NUMBER_WRITE,
+            parameter_kind,
+            internal_antenna_number,
+            external_antenna_number,
+        ]),
+    )
+    return EightChUsageAntennaCommandDryRun(
+        target=target,
+        parameter_kind=parameter_kind,
+        internal_antenna_number=internal_antenna_number,
+        external_antenna_number=external_antenna_number,
+        frame=frame,
+    )
+
+
+def format_8ch_usage_antenna_command_dry_run(dry_run: EightChUsageAntennaCommandDryRun) -> list[str]:
+    """使用アンテナ番号設定コマンドのdry-run情報を画面表示用に整形します。"""
+    return [
+        f"対象アンテナ: {dry_run.target.label}",
+        f"使用アンテナ番号: {dry_run.target.usage_antenna_number_hex}",
+        f"内部アンテナ番号: {dry_run.internal_antenna_number_hex}",
+        f"外部アンテナ番号: {dry_run.external_antenna_number_hex}",
+        f"dry-run送信フレーム: {dry_run.frame_hex}",
+        "注意: この段階ではフレーム表示だけです。実機へは送信しません。",
+    ]
 
 
 def format_8ch_inventory_candidate(target: EightChInventoryTarget) -> str:
