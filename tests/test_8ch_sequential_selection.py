@@ -115,7 +115,7 @@ def test_build_8ch_sequential_inventory_summary_keeps_ant_order_and_counts():
 
     assert summary["selected_order"] == ["ANT1", "ANT3"]
     assert summary["total_inventory_attempts"] == 4
-    assert summary["total_read_time_seconds"] == 0.556
+    assert summary["total_read_time_seconds"] == round(0.5555, 3)
     assert summary["total_read_count"] == 29
     assert summary["last_used_antenna_label"] == "ANT3"
     assert summary["restore"]["target_label"] == "ANT1"
