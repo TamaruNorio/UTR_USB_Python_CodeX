@@ -13,6 +13,7 @@
 - コマンドモード切替
 - Inventory前のリーダ設定表示
 - UHF_GET_INVENTORY_PARAM表示
+- 変更前の使用アンテナ番号読み取り
 - ANT1〜ANT8のUHF_CheckAntenna
 - 接続OKアンテナから 1 / 1,3 / all / q で選択
 - 選択した全ANTの使用アンテナ番号設定フレームを事前表示
@@ -20,6 +21,7 @@
 - ACKならそのANTでInventory
 - NACKまたは応答なしなら、そのANTはスキップ
 - ANTごとの読み取り枚数を集計
+- 終了時に変更前の使用アンテナ番号へ自動復元
 - 必要に応じて、ANT別サマリをCSV/JSONへ保存
 
 実行しないこと:
@@ -37,6 +39,7 @@ import csv
 import json
 import sys
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -52,6 +55,7 @@ try:
         format_8ch_usage_antenna_command_dry_run,
         parse_8ch_inventory_selection_input,
     )
+    from src.utr_commands import PARAMETER_KIND_COMMAND_MODE, build_frame
     from src.utr_usb_inventory_with_output_power import (
         _is_ack,
         _is_nack,
@@ -84,6 +88,7 @@ except ModuleNotFoundError:
         format_8ch_usage_antenna_command_dry_run,
         parse_8ch_inventory_selection_input,
     )
+    from utr_commands import PARAMETER_KIND_COMMAND_MODE, build_frame
     from utr_usb_inventory_with_output_power import (
         _is_ack,
         _is_nack,
@@ -110,6 +115,8 @@ except ModuleNotFoundError:
     )
 
 
+DETAIL_USAGE_ANTENNA_NUMBER_READ = 0x48
+DETAIL_USAGE_ANTENNA_NUMBER_WRITE = 0x38
 SUMMARY_CSV_FILENAME = "8ch_sequential_inventory_summary.csv"
 SUMMARY_JSON_FILENAME = "8ch_sequential_inventory_summary.json"
 SUMMARY_TARGET_MODEL = "UTR-SUN02-8CH"
@@ -132,6 +139,44 @@ SUMMARY_CSV_FIELDNAMES = [
     "read_count",
     "skip_count",
 ]
+
+
+@dataclass(frozen=True)
+class OriginalUsageAntennaSetting:
+    """変更前に読み取った使用アンテナ番号設定。"""
+
+    parameter_kind: int
+    internal_antenna_number: int
+    external_antenna_number: int
+
+    @property
+    def physical_port(self) -> int:
+        """UTR-SUN02-8CHの物理ポート番号。ANT1なら1です。"""
+        return self.internal_antenna_number + 1
+
+    @property
+    def usage_antenna_number(self) -> int:
+        """内部アンテナ番号 * 32 + 外部アンテナ番号で表す使用アンテナ番号。"""
+        return self.internal_antenna_number * 32 + self.external_antenna_number
+
+    @property
+    def label(self) -> str:
+        """画面表示・サマリ保存用のアンテナ表示名。"""
+        if 0 <= self.internal_antenna_number <= 7 and self.external_antenna_number == 0:
+            return f"ANT{self.physical_port}"
+        return f"ANT{self.physical_port}/EXT{self.external_antenna_number + 1}"
+
+    @property
+    def usage_antenna_number_hex(self) -> str:
+        return f"{self.usage_antenna_number:02X}h"
+
+    @property
+    def internal_antenna_number_hex(self) -> str:
+        return f"{self.internal_antenna_number:02X}h"
+
+    @property
+    def external_antenna_number_hex(self) -> str:
+        return f"{self.external_antenna_number:02X}h"
 
 
 def _select_sequential_8ch_inventory_targets(connected_targets):
@@ -167,7 +212,7 @@ def _select_sequential_8ch_inventory_targets(connected_targets):
 
 
 def _parse_restore_usage_antenna_target_input(available_targets, value):
-    """終了前に戻すANTを1つだけ選択します。"""
+    """終了前に戻すANTを1つだけ選択します。旧手動復元テスト用に残しています。"""
     normalized = value.strip().lower()
     if normalized in {"q", "quit", "cancel"}:
         return None
@@ -187,6 +232,88 @@ def _parse_restore_usage_antenna_target_input(available_targets, value):
     if selected_port not in target_by_port:
         raise ValueError("候補に表示されているANT番号を入力してください。")
     return target_by_port[selected_port]
+
+
+def _build_read_current_usage_antenna_frame(parameter_kind: int = PARAMETER_KIND_COMMAND_MODE) -> bytes:
+    """現在選択されている使用アンテナ番号の読み取りフレームを生成します。"""
+    return build_frame(0x55, bytes([DETAIL_USAGE_ANTENNA_NUMBER_READ, parameter_kind]))
+
+
+def _parse_current_usage_antenna_response(
+    response: bytes,
+    parameter_kind: int = PARAMETER_KIND_COMMAND_MODE,
+) -> OriginalUsageAntennaSetting:
+    """使用アンテナ番号読み取りACKレスポンスを解析します。"""
+    if not response:
+        raise ValueError("使用アンテナ番号読み取りレスポンスが空です。")
+    if not _is_ack(response):
+        raise ValueError("使用アンテナ番号読み取りACKではありません。")
+    if len(response) < 9:
+        raise ValueError("使用アンテナ番号読み取りレスポンスが短すぎます。")
+    if response[3] != 0x04:
+        raise ValueError("使用アンテナ番号読み取りレスポンスのデータ長が不正です。")
+    if response[4] != DETAIL_USAGE_ANTENNA_NUMBER_READ:
+        raise ValueError("使用アンテナ番号読み取りレスポンスの詳細コマンドが不正です。")
+    if response[5] != parameter_kind:
+        raise ValueError("使用アンテナ番号読み取りレスポンスのパラメータ種類が不正です。")
+
+    return OriginalUsageAntennaSetting(
+        parameter_kind=response[5],
+        internal_antenna_number=response[6],
+        external_antenna_number=response[7],
+    )
+
+
+def _build_usage_antenna_restore_frame(setting: OriginalUsageAntennaSetting) -> bytes:
+    """変更前の使用アンテナ番号へ戻す書き込みフレームを生成します。"""
+    return build_frame(
+        0x55,
+        bytes([
+            DETAIL_USAGE_ANTENNA_NUMBER_WRITE,
+            setting.parameter_kind,
+            setting.internal_antenna_number,
+            setting.external_antenna_number,
+        ]),
+    )
+
+
+def _format_original_usage_antenna_setting(setting: OriginalUsageAntennaSetting) -> list[str]:
+    """変更前の使用アンテナ番号設定を画面表示用に整形します。"""
+    return [
+        f"対象アンテナ: {setting.label}",
+        f"使用アンテナ番号: {setting.usage_antenna_number_hex}",
+        f"内部アンテナ番号: {setting.internal_antenna_number_hex}",
+        f"外部アンテナ番号: {setting.external_antenna_number_hex}",
+    ]
+
+
+def _read_original_usage_antenna_setting(ser: serial.Serial) -> OriginalUsageAntennaSetting | None:
+    """順次Inventory開始前に、変更前の使用アンテナ番号を読み取ります。"""
+    frame = _build_read_current_usage_antenna_frame()
+    print("")
+    print("=== 変更前 使用アンテナ番号読み取り ===")
+    print(f"読み取りフレーム: {frame.hex(' ').upper()}")
+    print("パラメータ種類: コマンドモード用パラメータ")
+    response = communicate(ser, frame)
+
+    if _is_nack(response):
+        print("変更前の使用アンテナ番号読み取り: NACK")
+        print_nack_message(response)
+        return None
+
+    try:
+        setting = _parse_current_usage_antenna_response(response)
+    except ValueError as exc:
+        print(f"変更前の使用アンテナ番号読み取りに失敗しました: {exc}")
+        if response:
+            print(f"Raw: {response.hex().upper()}")
+        return None
+
+    print("変更前の使用アンテナ番号を読み取りました。")
+    for line in _format_original_usage_antenna_setting(setting):
+        print(line)
+    print("終了時は、この変更前設定へ自動復元します。")
+    return setting
 
 
 def _build_8ch_sequential_inventory_summary(
@@ -474,91 +601,65 @@ def _run_sequential_inventory_loop(ser: serial.Serial, dry_runs) -> tuple[int, f
     )
 
 
-def _restore_usage_antenna_before_exit(ser: serial.Serial, selected_targets, last_used_antenna_label: str | None) -> dict[str, Any]:
-    """終了前に使用アンテナ番号を選択ANTのいずれかへ戻します。"""
+def _restore_original_usage_antenna_before_exit(
+    ser: serial.Serial,
+    original_setting: OriginalUsageAntennaSetting | None,
+    last_used_antenna_label: str | None,
+) -> dict[str, Any]:
+    """終了前に、変更前に読み取った使用アンテナ番号へ自動復元します。"""
     last_used_text = last_used_antenna_label if last_used_antenna_label is not None else "なし"
     print("")
     print(f"最後に使用したANT: {last_used_text}")
-    if not ask_yes_no("終了前に使用アンテナ番号を戻しますか？ [y/N]: ", default=False):
-        print("終了前の使用アンテナ番号戻しは行いません。")
+
+    if original_setting is None:
+        print("変更前設定がないため、使用アンテナ番号の自動復元は行いません。")
         return {
             "requested": False,
             "target_label": None,
             "success": None,
-            "message": "not_requested",
+            "message": "original_setting_not_available",
         }
 
+    restore_frame = _build_usage_antenna_restore_frame(original_setting)
     print("")
-    print("=== 終了前に戻す使用アンテナ番号の選択 ===")
-    print("今回選択した接続OKアンテナだけを候補として表示します。")
-    for target in selected_targets:
-        print(format_8ch_inventory_candidate(target))
-    print("選択例: 1 / 3 / q")
-    print("戻し先は1つだけ入力してください。all と複数指定は使用できません。")
-
-    while True:
-        value = input("終了前に戻すANT番号を入力してください（中止は'q'）: ").strip()
-        try:
-            restore_target = _parse_restore_usage_antenna_target_input(selected_targets, value)
-        except ValueError as exc:
-            print(f"入力エラー: {exc}")
-            continue
-
-        if restore_target is None:
-            print("終了前の使用アンテナ番号戻しを中止しました。")
-            return {
-                "requested": True,
-                "target_label": None,
-                "success": None,
-                "message": "canceled",
-            }
-        break
-
-    dry_run = build_sun02_8ch_usage_antenna_command_dry_run(restore_target)
-    print("")
-    print("=== 終了前 使用アンテナ番号戻し dry-run ===")
-    for line in format_8ch_usage_antenna_command_dry_run(dry_run):
+    print("=== 終了前 使用アンテナ番号 自動復元 dry-run ===")
+    for line in _format_original_usage_antenna_setting(original_setting):
         print(line)
-    print("ここで送信するのはコマンドモード用パラメータです。FLASHは変更しません。")
+    print(f"dry-run送信フレーム: {restore_frame.hex(' ').upper()}")
+    print("変更前に読み取ったコマンドモード用パラメータへ自動復元します。")
+    print("FLASHは変更しません。")
     print("送信出力、周波数、UHF_SET_INVENTORY_PARAMは変更しません。")
-    if not ask_yes_no("この内容で使用アンテナ番号を戻しますか？ [y/N]: ", default=False):
-        print("終了前の使用アンテナ番号戻しを中止しました。")
-        return {
-            "requested": True,
-            "target_label": restore_target.label,
-            "success": None,
-            "message": "canceled_before_send",
-        }
 
     print("")
-    print(f"--- 終了前 使用アンテナ番号戻し: {restore_target.label} ---")
-    print(f"送信フレーム: {dry_run.frame_hex}")
-    response = communicate(ser, dry_run.frame)
+    print(f"--- 終了前 使用アンテナ番号 自動復元: {original_setting.label} ---")
+    print(f"送信フレーム: {restore_frame.hex(' ').upper()}")
+    response = communicate(ser, restore_frame)
     if _is_ack(response):
-        display_message = f"戻し完了: {restore_target.label} / 使用アンテナ番号 {restore_target.usage_antenna_number_hex}"
+        display_message = f"自動復元完了: {original_setting.label} / 使用アンテナ番号 {original_setting.usage_antenna_number_hex}"
         print(display_message)
         return {
             "requested": True,
-            "target_label": restore_target.label,
+            "target_label": original_setting.label,
             "success": True,
-            "message": "completed",
+            "message": "auto_restored_original",
         }
 
     if _is_nack(response):
-        print("戻し失敗: NACK")
+        print("自動復元失敗: NACK")
         print_nack_message(response)
         return {
             "requested": True,
-            "target_label": restore_target.label,
+            "target_label": original_setting.label,
             "success": False,
             "message": "nack",
         }
 
-    print("戻し失敗: ACK/NACKなし")
-    print(f"Raw: {response.hex().upper()}")
+    print("自動復元失敗: ACK/NACKなし")
+    if response:
+        print(f"Raw: {response.hex().upper()}")
     return {
         "requested": True,
-        "target_label": restore_target.label,
+        "target_label": original_setting.label,
         "success": False,
         "message": "no_ack_or_nack",
     }
@@ -638,6 +739,11 @@ def main() -> None:
         _set_command_mode(ser)
         read_and_print_pre_inventory_reader_settings(ser)
         _read_inventory_parameters(ser)
+        original_usage_antenna_setting = _read_original_usage_antenna_setting(ser)
+        if original_usage_antenna_setting is None:
+            print("変更前の使用アンテナ番号を保存できないため、順次Inventoryは開始しません。")
+            print("理由: 終了時に元の設定へ自動復元できないためです。")
+            return
 
         profile = get_model_profile(identified_model_key)
         connected_targets = check_and_print_antennas(ser, profile)
@@ -673,7 +779,11 @@ def main() -> None:
                 f"/ Inventory実行 {ant_inventory_counts[label]} 回 "
                 f"/ スキップ {ant_skip_counts[label]} 回"
             )
-        restore_result = _restore_usage_antenna_before_exit(ser, selected_targets, last_used_antenna_label)
+        restore_result = _restore_original_usage_antenna_before_exit(
+            ser,
+            original_usage_antenna_setting,
+            last_used_antenna_label,
+        )
         _ask_and_save_8ch_sequential_summary(
             selected_targets=selected_targets,
             total_inventory_attempts=total_inventory_attempts,
