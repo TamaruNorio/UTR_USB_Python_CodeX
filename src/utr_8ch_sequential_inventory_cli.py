@@ -20,6 +20,7 @@
 - ACKならそのANTでInventory
 - NACKまたは応答なしなら、そのANTはスキップ
 - ANTごとの読み取り枚数を集計
+- 必要に応じて、ANT別サマリをCSV/JSONへ保存
 
 実行しないこと:
 - FLASH書き込み
@@ -32,8 +33,13 @@
 
 from __future__ import annotations
 
+import csv
+import json
 import sys
 import time
+from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 import serial
 from serial.tools import list_ports
@@ -104,6 +110,30 @@ except ModuleNotFoundError:
     )
 
 
+SUMMARY_CSV_FILENAME = "8ch_sequential_inventory_summary.csv"
+SUMMARY_JSON_FILENAME = "8ch_sequential_inventory_summary.json"
+SUMMARY_TARGET_MODEL = "UTR-SUN02-8CH"
+SUMMARY_CSV_FIELDNAMES = [
+    "saved_at",
+    "target_model",
+    "selected_order",
+    "total_inventory_attempts",
+    "total_read_time_seconds",
+    "total_read_count",
+    "last_used_antenna_label",
+    "restore_requested",
+    "restore_target_label",
+    "restore_success",
+    "restore_message",
+    "antenna_label",
+    "physical_port",
+    "usage_antenna_number",
+    "inventory_count",
+    "read_count",
+    "skip_count",
+]
+
+
 def _select_sequential_8ch_inventory_targets(connected_targets):
     """接続OKアンテナから、順次Inventory対象を選択します。"""
     available_targets = build_8ch_inventory_targets(connected_targets)
@@ -157,6 +187,125 @@ def _parse_restore_usage_antenna_target_input(available_targets, value):
     if selected_port not in target_by_port:
         raise ValueError("候補に表示されているANT番号を入力してください。")
     return target_by_port[selected_port]
+
+
+def _build_8ch_sequential_inventory_summary(
+    selected_targets,
+    total_inventory_attempts: int,
+    total_read_time: float,
+    total_read_count: int,
+    ant_read_counts: dict[str, int],
+    ant_inventory_counts: dict[str, int],
+    ant_skip_counts: dict[str, int],
+    last_used_antenna_label: str | None,
+    restore_result: dict[str, Any],
+    saved_at: str | None = None,
+) -> dict[str, Any]:
+    """8CH順次InventoryのANT別サマリを保存しやすい形に整えます。
+
+    PC+UIIは保存しません。公開ログやGitHubへ貼り付ける前提でも扱いやすいよう、
+    ANT別の集計値だけを保存します。
+    """
+    selected_order = [target.label for target in selected_targets]
+    ant_results = []
+    for target in selected_targets:
+        label = target.label
+        ant_results.append(
+            {
+                "antenna_label": label,
+                "physical_port": target.physical_port,
+                "usage_antenna_number": target.usage_antenna_number_hex,
+                "inventory_count": ant_inventory_counts.get(label, 0),
+                "read_count": ant_read_counts.get(label, 0),
+                "skip_count": ant_skip_counts.get(label, 0),
+            }
+        )
+
+    return {
+        "saved_at": saved_at or datetime.now().isoformat(timespec="seconds"),
+        "target_model": SUMMARY_TARGET_MODEL,
+        "selected_order": selected_order,
+        "total_inventory_attempts": total_inventory_attempts,
+        "total_read_time_seconds": round(total_read_time, 3),
+        "total_read_count": total_read_count,
+        "last_used_antenna_label": last_used_antenna_label,
+        "restore": restore_result,
+        "ant_results": ant_results,
+        "privacy_note": "PC+UII values are not stored in this 8CH summary.",
+    }
+
+
+def _summary_to_csv_rows(summary: dict[str, Any]) -> list[dict[str, Any]]:
+    """8CHサマリをANT別CSV行へ変換します。"""
+    restore = summary.get("restore", {})
+    base = {
+        "saved_at": summary["saved_at"],
+        "target_model": summary["target_model"],
+        "selected_order": " -> ".join(summary.get("selected_order", [])),
+        "total_inventory_attempts": summary["total_inventory_attempts"],
+        "total_read_time_seconds": summary["total_read_time_seconds"],
+        "total_read_count": summary["total_read_count"],
+        "last_used_antenna_label": summary.get("last_used_antenna_label") or "",
+        "restore_requested": restore.get("requested", False),
+        "restore_target_label": restore.get("target_label") or "",
+        "restore_success": "" if restore.get("success") is None else restore["success"],
+        "restore_message": restore.get("message") or "",
+    }
+
+    rows = []
+    for item in summary.get("ant_results", []):
+        rows.append(
+            {
+                **base,
+                "antenna_label": item["antenna_label"],
+                "physical_port": item["physical_port"],
+                "usage_antenna_number": item["usage_antenna_number"],
+                "inventory_count": item["inventory_count"],
+                "read_count": item["read_count"],
+                "skip_count": item["skip_count"],
+            }
+        )
+    return rows
+
+
+def _append_8ch_summary_to_csv(filename: str, summary: dict[str, Any]) -> None:
+    """8CH ANT別サマリをUTF-8 BOM付きCSVへ追記します。"""
+    path = Path(filename)
+    write_header = not path.exists() or path.stat().st_size == 0
+    with path.open("a", newline="", encoding="utf-8-sig") as file:
+        writer = csv.DictWriter(file, fieldnames=SUMMARY_CSV_FIELDNAMES)
+        if write_header:
+            writer.writeheader()
+        writer.writerows(_summary_to_csv_rows(summary))
+
+
+def _append_8ch_summary_to_json(filename: str, summary: dict[str, Any]) -> None:
+    """8CHサマリをJSON履歴へ追記します。"""
+    path = Path(filename)
+    if path.exists() and path.stat().st_size > 0:
+        with path.open("r", encoding="utf-8") as file:
+            history = json.load(file)
+        if not isinstance(history, list):
+            raise ValueError("8CH summary JSON file must contain a list")
+    else:
+        history = []
+
+    history.append(summary)
+    with path.open("w", encoding="utf-8") as file:
+        json.dump(history, file, ensure_ascii=False, indent=2)
+        file.write("\n")
+
+
+def _save_8ch_sequential_summary_files(
+    summary: dict[str, Any],
+    csv_filename: str = SUMMARY_CSV_FILENAME,
+    json_filename: str = SUMMARY_JSON_FILENAME,
+) -> None:
+    """8CH順次InventoryサマリをCSV/JSONへ保存します。"""
+    _append_8ch_summary_to_csv(csv_filename, summary)
+    _append_8ch_summary_to_json(json_filename, summary)
+    print(f"8CH順次InventoryサマリCSVを保存しました: {csv_filename}")
+    print(f"8CH順次InventoryサマリJSONを保存しました: {json_filename}")
 
 
 def _build_and_confirm_usage_antenna_dry_runs(selected_targets):
@@ -324,14 +473,19 @@ def _run_sequential_inventory_loop(ser: serial.Serial, dry_runs) -> tuple[int, f
     )
 
 
-def _restore_usage_antenna_before_exit(ser: serial.Serial, selected_targets, last_used_antenna_label: str | None) -> None:
+def _restore_usage_antenna_before_exit(ser: serial.Serial, selected_targets, last_used_antenna_label: str | None) -> dict[str, Any]:
     """終了前に使用アンテナ番号を選択ANTのいずれかへ戻します。"""
     last_used_text = last_used_antenna_label if last_used_antenna_label is not None else "なし"
     print("")
     print(f"最後に使用したANT: {last_used_text}")
     if not ask_yes_no("終了前に使用アンテナ番号を戻しますか？ [y/N]: ", default=False):
         print("終了前の使用アンテナ番号戻しは行いません。")
-        return
+        return {
+            "requested": False,
+            "target_label": None,
+            "success": None,
+            "message": "not_requested",
+        }
 
     print("")
     print("=== 終了前に戻す使用アンテナ番号の選択 ===")
@@ -351,7 +505,12 @@ def _restore_usage_antenna_before_exit(ser: serial.Serial, selected_targets, las
 
         if restore_target is None:
             print("終了前の使用アンテナ番号戻しを中止しました。")
-            return
+            return {
+                "requested": True,
+                "target_label": None,
+                "success": None,
+                "message": "canceled",
+            }
         break
 
     dry_run = build_sun02_8ch_usage_antenna_command_dry_run(restore_target)
@@ -363,23 +522,82 @@ def _restore_usage_antenna_before_exit(ser: serial.Serial, selected_targets, las
     print("送信出力、周波数、UHF_SET_INVENTORY_PARAMは変更しません。")
     if not ask_yes_no("この内容で使用アンテナ番号を戻しますか？ [y/N]: ", default=False):
         print("終了前の使用アンテナ番号戻しを中止しました。")
-        return
+        return {
+            "requested": True,
+            "target_label": restore_target.label,
+            "success": None,
+            "message": "canceled_before_send",
+        }
 
     print("")
     print(f"--- 終了前 使用アンテナ番号戻し: {restore_target.label} ---")
     print(f"送信フレーム: {dry_run.frame_hex}")
     response = communicate(ser, dry_run.frame)
     if _is_ack(response):
-        print(f"戻し完了: {restore_target.label} / 使用アンテナ番号 {restore_target.usage_antenna_number_hex}")
-        return
+        message = f"戻し完了: {restore_target.label} / 使用アンテナ番号 {restore_target.usage_antenna_number_hex}"
+        print(message)
+        return {
+            "requested": True,
+            "target_label": restore_target.label,
+            "success": True,
+            "message": message,
+        }
 
     if _is_nack(response):
         print("戻し失敗: NACK")
         print_nack_message(response)
-        return
+        return {
+            "requested": True,
+            "target_label": restore_target.label,
+            "success": False,
+            "message": "nack",
+        }
 
     print("戻し失敗: ACK/NACKなし")
     print(f"Raw: {response.hex().upper()}")
+    return {
+        "requested": True,
+        "target_label": restore_target.label,
+        "success": False,
+        "message": "no_ack_or_nack",
+    }
+
+
+def _ask_and_save_8ch_sequential_summary(
+    selected_targets,
+    total_inventory_attempts: int,
+    total_read_time: float,
+    total_read_count: int,
+    ant_read_counts: dict[str, int],
+    ant_inventory_counts: dict[str, int],
+    ant_skip_counts: dict[str, int],
+    last_used_antenna_label: str | None,
+    restore_result: dict[str, Any],
+) -> None:
+    """8CH順次InventoryのANT別サマリ保存を確認して実行します。"""
+    if total_inventory_attempts <= 0:
+        print("Inventory未実行のため、8CH順次Inventoryサマリは保存しません。")
+        return
+
+    print("")
+    print("8CH順次InventoryのANT別サマリをCSV/JSONへ保存できます。")
+    print("このサマリにはPC+UIIを保存しません。ANT別の集計値だけを保存します。")
+    if not ask_yes_no("8CH順次InventoryのANT別サマリを保存しますか？ [y/N]: ", default=False):
+        print("8CH順次Inventoryサマリは保存しません。")
+        return
+
+    summary = _build_8ch_sequential_inventory_summary(
+        selected_targets=selected_targets,
+        total_inventory_attempts=total_inventory_attempts,
+        total_read_time=total_read_time,
+        total_read_count=total_read_count,
+        ant_read_counts=ant_read_counts,
+        ant_inventory_counts=ant_inventory_counts,
+        ant_skip_counts=ant_skip_counts,
+        last_used_antenna_label=last_used_antenna_label,
+        restore_result=restore_result,
+    )
+    _save_8ch_sequential_summary_files(summary)
 
 
 def main() -> None:
@@ -454,7 +672,18 @@ def main() -> None:
                 f"/ Inventory実行 {ant_inventory_counts[label]} 回 "
                 f"/ スキップ {ant_skip_counts[label]} 回"
             )
-        _restore_usage_antenna_before_exit(ser, selected_targets, last_used_antenna_label)
+        restore_result = _restore_usage_antenna_before_exit(ser, selected_targets, last_used_antenna_label)
+        _ask_and_save_8ch_sequential_summary(
+            selected_targets=selected_targets,
+            total_inventory_attempts=total_inventory_attempts,
+            total_read_time=total_read_time,
+            total_read_count=total_read_count,
+            ant_read_counts=ant_read_counts,
+            ant_inventory_counts=ant_inventory_counts,
+            ant_skip_counts=ant_skip_counts,
+            last_used_antenna_label=last_used_antenna_label,
+            restore_result=restore_result,
+        )
     except KeyboardInterrupt:
         print("")
         print("中断要求を受け付けました。終了します。")
