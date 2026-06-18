@@ -15,3 +15,5 @@ inventory_results.txt
 inventory_results.csv
 inventory_results.json
 inventory_results_legacy_*.csv
+8ch_sequential_inventory_summary.csv
+8ch_sequential_inventory_summary.json
