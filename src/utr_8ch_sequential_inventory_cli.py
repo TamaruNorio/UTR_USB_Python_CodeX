@@ -292,7 +292,8 @@ def _append_8ch_summary_to_json(filename: str, summary: dict[str, Any]) -> None:
 
     history.append(summary)
     with path.open("w", encoding="utf-8") as file:
-        json.dump(history, file, ensure_ascii=False, indent=2)
+        # Windows PowerShell の type/Get-Content で文字化けしにくいよう、JSONはASCIIエスケープで保存します。
+        json.dump(history, file, ensure_ascii=True, indent=2)
         file.write("\n")
 
 
@@ -534,13 +535,13 @@ def _restore_usage_antenna_before_exit(ser: serial.Serial, selected_targets, las
     print(f"送信フレーム: {dry_run.frame_hex}")
     response = communicate(ser, dry_run.frame)
     if _is_ack(response):
-        message = f"戻し完了: {restore_target.label} / 使用アンテナ番号 {restore_target.usage_antenna_number_hex}"
-        print(message)
+        display_message = f"戻し完了: {restore_target.label} / 使用アンテナ番号 {restore_target.usage_antenna_number_hex}"
+        print(display_message)
         return {
             "requested": True,
             "target_label": restore_target.label,
             "success": True,
-            "message": message,
+            "message": "completed",
         }
 
     if _is_nack(response):
