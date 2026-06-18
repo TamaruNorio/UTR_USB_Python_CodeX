@@ -8,9 +8,13 @@ import json
 
 from src.utr_8ch import build_8ch_inventory_targets, parse_8ch_inventory_selection_input
 from src.utr_8ch_sequential_inventory_cli import (
+    OriginalUsageAntennaSetting,
     _append_8ch_summary_to_csv,
     _append_8ch_summary_to_json,
     _build_8ch_sequential_inventory_summary,
+    _build_read_current_usage_antenna_frame,
+    _build_usage_antenna_restore_frame,
+    _parse_current_usage_antenna_response,
     _parse_restore_usage_antenna_target_input,
 )
 from src.utr_antenna import AntennaCheckTarget
@@ -89,6 +93,47 @@ def test_parse_restore_usage_antenna_target_input_rejects_all():
         raise AssertionError("all must be rejected for restore target selection")
 
 
+def test_build_read_current_usage_antenna_frame_uses_command_mode_parameter():
+    assert _build_read_current_usage_antenna_frame().hex(" ").upper() == "02 00 55 02 48 00 03 A4 0D"
+
+
+def test_parse_current_usage_antenna_response_reads_internal_and_external_numbers():
+    response = bytes.fromhex("02 00 30 04 48 00 01 03 03 85 0D")
+
+    setting = _parse_current_usage_antenna_response(response)
+
+    assert setting.parameter_kind == 0x00
+    assert setting.internal_antenna_number == 0x01
+    assert setting.external_antenna_number == 0x03
+    assert setting.label == "ANT2/EXT4"
+    assert setting.usage_antenna_number_hex == "23h"
+
+
+def test_build_usage_antenna_restore_frame_uses_original_setting():
+    setting = OriginalUsageAntennaSetting(
+        parameter_kind=0x00,
+        internal_antenna_number=0x02,
+        external_antenna_number=0x00,
+    )
+
+    frame = _build_usage_antenna_restore_frame(setting)
+
+    assert frame.hex(" ").upper() == "02 00 55 04 38 00 02 00 03 98 0D"
+    assert setting.label == "ANT3"
+    assert setting.usage_antenna_number_hex == "40h"
+
+
+def test_parse_current_usage_antenna_response_rejects_non_ack():
+    response = bytes.fromhex("02 00 31 02 48 00 03 A5 0D")
+
+    try:
+        _parse_current_usage_antenna_response(response)
+    except ValueError as exc:
+        assert "ACKではありません" in str(exc)
+    else:
+        raise AssertionError("non ACK response must be rejected")
+
+
 def test_build_8ch_sequential_inventory_summary_keeps_ant_order_and_counts():
     targets = build_8ch_inventory_targets([
         AntennaCheckTarget(0x00, "ANT1", "外付けアンテナ"),
@@ -108,7 +153,7 @@ def test_build_8ch_sequential_inventory_summary_keeps_ant_order_and_counts():
             "requested": True,
             "target_label": "ANT1",
             "success": True,
-            "message": "completed",
+            "message": "auto_restored_original",
         },
         saved_at="2026-06-18T09:00:00",
     )
@@ -119,7 +164,7 @@ def test_build_8ch_sequential_inventory_summary_keeps_ant_order_and_counts():
     assert summary["total_read_count"] == 29
     assert summary["last_used_antenna_label"] == "ANT3"
     assert summary["restore"]["target_label"] == "ANT1"
-    assert summary["restore"]["message"] == "completed"
+    assert summary["restore"]["message"] == "auto_restored_original"
     assert summary["privacy_note"] == "PC+UII values are not stored in this 8CH summary."
     assert summary["ant_results"] == [
         {
