@@ -108,7 +108,7 @@ def test_build_8ch_sequential_inventory_summary_keeps_ant_order_and_counts():
             "requested": True,
             "target_label": "ANT1",
             "success": True,
-            "message": "戻し完了: ANT1 / 使用アンテナ番号 00h",
+            "message": "completed",
         },
         saved_at="2026-06-18T09:00:00",
     )
@@ -119,6 +119,7 @@ def test_build_8ch_sequential_inventory_summary_keeps_ant_order_and_counts():
     assert summary["total_read_count"] == 29
     assert summary["last_used_antenna_label"] == "ANT3"
     assert summary["restore"]["target_label"] == "ANT1"
+    assert summary["restore"]["message"] == "completed"
     assert summary["privacy_note"] == "PC+UII values are not stored in this 8CH summary."
     assert summary["ant_results"] == [
         {
@@ -194,7 +195,9 @@ def test_append_8ch_summary_to_json_appends_history_without_pc_uii(tmp_path):
     _append_8ch_summary_to_json(str(path), summary)
     _append_8ch_summary_to_json(str(path), summary)
 
-    history = json.loads(path.read_text(encoding="utf-8"))
+    raw_text = path.read_text(encoding="utf-8")
+    history = json.loads(raw_text)
     assert len(history) == 2
     assert history[0]["ant_results"][0]["antenna_label"] == "ANT1"
-    assert "pc_uii" not in json.dumps(history, ensure_ascii=False).lower()
+    assert "pc_uii" not in raw_text.lower()
+    assert raw_text.isascii()
