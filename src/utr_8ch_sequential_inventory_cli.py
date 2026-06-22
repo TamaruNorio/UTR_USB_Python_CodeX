@@ -621,6 +621,38 @@ def _run_sequential_inventory_loop(
     )
 
 
+def _drain_serial_input_before_restore(
+    ser: serial.Serial,
+    quiet_seconds: float = 0.20,
+    max_wait_seconds: float = 0.80,
+) -> None:
+    """復元コマンド送信前に、割り込み前のInventory残留応答を受信バッファから除去します。"""
+    drained_bytes = 0
+    deadline = time.time() + max_wait_seconds
+    quiet_deadline = time.time() + quiet_seconds
+
+    try:
+        while time.time() < deadline:
+            pending = int(getattr(ser, "in_waiting", 0) or 0)
+            if pending > 0:
+                drained = ser.read(pending)
+                drained_bytes += len(drained)
+                quiet_deadline = time.time() + quiet_seconds
+                continue
+            if time.time() >= quiet_deadline:
+                break
+            time.sleep(0.02)
+
+        ser.reset_input_buffer()
+    except Exception as exc:
+        print("復元前の受信バッファクリアでエラーが発生しました。復元処理は継続します。")
+        print(f"受信バッファクリアエラー: {exc}")
+        return
+
+    if drained_bytes > 0:
+        print(f"復元前に受信バッファをクリアしました: {drained_bytes} bytes")
+
+
 def _restore_original_usage_antenna_before_exit(
     ser: serial.Serial,
     original_setting: OriginalUsageAntennaSetting | None,
@@ -653,7 +685,17 @@ def _restore_original_usage_antenna_before_exit(
     print("")
     print(f"--- 終了前 使用アンテナ番号 自動復元: {original_setting.label} ---")
     print(f"送信フレーム: {restore_frame.hex(' ').upper()}")
+    _drain_serial_input_before_restore(ser)
     response = communicate(ser, restore_frame)
+
+    if not _is_ack(response) and not _is_nack(response):
+        print("自動復元応答にACK/NACKがありません。")
+        print("割り込み前のInventory残留応答を受信している可能性があるため、1回だけ再試行します。")
+        if response:
+            print(f"Raw: {response.hex().upper()}")
+        _drain_serial_input_before_restore(ser)
+        response = communicate(ser, restore_frame)
+
     if _is_ack(response):
         display_message = f"自動復元完了: {original_setting.label} / 使用アンテナ番号 {original_setting.usage_antenna_number_hex}"
         print(display_message)
