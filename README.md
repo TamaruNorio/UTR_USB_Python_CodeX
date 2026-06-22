@@ -60,8 +60,10 @@ py .\src\utr_8ch_sequential_inventory_cli.py
 15. ANT別に読み取り枚数、Inventory実行回数、スキップ回数を表示する。
 16. 終了時に、開始前に読み取った使用アンテナ番号へ自動復元する。
 17. Ctrl+Cや例外時も、可能な範囲でシリアルクローズ前に自動復元を試みる。
-18. 必要に応じて、8CH順次InventoryサマリをCSV/JSONへ保存する。
-19. シリアル接続を閉じる。
+18. 復元前には、割り込み前のInventory応答が残らないよう受信バッファをクリアする。
+19. 復元応答としてACK/NACK以外を受信した場合は、残留応答の可能性を考慮して1回だけ再試行する。
+20. 必要に応じて、8CH順次InventoryサマリをCSV/JSONへ保存する。
+21. シリアル接続を閉じる。
 
 ## 重要な制約
 
@@ -74,6 +76,8 @@ py .\src\utr_8ch_sequential_inventory_cli.py
 - UTR-SUN02-8CH / USM08 の順次Inventory CLIでは、使用アンテナ番号設定をコマンドモード用パラメータへ送信します。FLASHへは保存しません。
 - UTR-SUN02-8CH / USM08 では、Inventory対象への一時切替時に ANT1=使用アンテナ番号 `00h`、ANT2=`20h`、ANT3=`40h`、ANT4=`60h`、ANT5=`80h`、ANT6=`A0h`、ANT7=`C0h`、ANT8=`E0h` を使います。
 - ただし、開始前の変更前設定は外部アンテナ番号が `00h` 固定とは限りません。終了時は開始前に読み取った内部アンテナ番号・外部アンテナ番号へ自動復元します。
+- 異常終了時の自動復元では、受信バッファ内に残ったInventory応答をクリアしてから復元コマンドを送信します。
+- 復元コマンドの再試行は、同じ復元フレームを1回だけ送信します。
 - UTR-SUN02V-8CH と UTR-SUN02-8CH はROMシリーズ名と機種識別までは扱いますが、UTR-SUN02-8CH用の実送信CLIは USM08 を対象にします。
 - 実タグIDを含む `PC+UII` / `PC+EPC` は、GitHub、Issue、PR本文、公開ログへ載せません。
 - 実行時に `PC+UIIを画面表示でマスクしますか？` で `y` を選ぶと、画面表示だけ `PC+UII: 省略` にできます。
@@ -92,7 +96,9 @@ py .\src\utr_8ch_sequential_inventory_cli.py
 - UTR-SUN02-8CH / USM08では、ANT1とANT3接続状態で、`all` 選択による ANT1 -> ANT3 順次Inventoryを実機確認済みです。
 - UTR-SUN02-8CH / USM08では、開始前に変更前の使用アンテナ番号を読み取り、通常終了時に変更前設定へ自動復元できることを実機確認済みです。
 - 実機確認例では、開始前設定として `ANT3/EXT5`、使用アンテナ番号 `44h` を読み取り、終了時に `ANT3/EXT5 / 44h` へ自動復元できています。
-- Ctrl+Cや例外時も、可能な範囲で `finally` 側から変更前設定へ自動復元を試みます。異常終了時の実機確認は別途実施してください。
+- Ctrl+Cや例外時も、可能な範囲で `finally` 側から変更前設定へ自動復元を試みます。
+- Ctrl+C直前のInventory応答が残る場合に備え、復元前に受信バッファをクリアし、必要に応じて同じ復元フレームを1回だけ再送します。
+- Ctrl+C時の最終的な復元成功確認は、PR #70 反映後に実機で確認してください。
 - Inventory結果保存時、CSV/JSONへ `antenna_number`、`antenna_label`、`antenna_description` を保存します。
 - 8CH順次Inventoryサマリ保存時、CSV/JSONへANT別のInventory実行回数、読み取り枚数、スキップ回数、復元結果を保存します。PC+UII実値は保存しません。
 - Inventory未実行時は、結果ファイルを保存しません。
@@ -211,7 +217,8 @@ py .\src\utr_8ch_sequential_inventory_cli.py
 9. 選択ANT一巡の繰り返し回数を入力する。
 10. `q` でInventoryループを終了する。
 11. 終了時に、開始前に読み取った使用アンテナ番号へ自動復元されることを確認する。
-12. 必要に応じて、8CH順次InventoryサマリをCSV/JSONへ保存する。
+12. Ctrl+C確認では、Inventory中断後に受信バッファクリアと自動復元再試行が行われることを確認する。
+13. 必要に応じて、8CH順次InventoryサマリをCSV/JSONへ保存する。
 
 実機確認済みの例です。
 
@@ -340,6 +347,8 @@ py .\src\utr_8ch_sequential_inventory_cli.py
 - NACKまたはACK/NACKなしの場合、そのANTはスキップします。
 - 終了時は、開始前に読み取った使用アンテナ番号へ自動復元します。
 - Ctrl+Cや例外時も、可能な範囲でシリアルクローズ前に自動復元を試みます。
+- Ctrl+C直前のInventory応答が受信バッファに残る場合があるため、復元前に受信バッファをクリアします。
+- 復元応答としてACK/NACK以外を受信した場合、同じ復元フレームを1回だけ再送します。
 
 ## セキュリティ・機密情報の注意
 
