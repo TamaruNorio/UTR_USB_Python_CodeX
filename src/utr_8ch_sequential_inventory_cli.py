@@ -22,6 +22,7 @@
 - NACKまたは応答なしなら、そのANTはスキップ
 - ANTごとの読み取り枚数を集計
 - 終了時に変更前の使用アンテナ番号へ自動復元
+- Ctrl+Cや例外時も、可能な範囲でfinally側から自動復元
 - 必要に応じて、ANT別サマリをCSV/JSONへ保存
 
 実行しないこと:
@@ -459,18 +460,31 @@ def _build_and_confirm_usage_antenna_dry_runs(selected_targets):
     return dry_runs
 
 
-def _send_usage_antenna_setting(ser: serial.Serial, dry_run) -> bool:
+def _send_usage_antenna_setting(
+    ser: serial.Serial,
+    dry_run,
+    restore_state: dict[str, Any] | None = None,
+) -> bool:
     """1つのANTについて使用アンテナ番号設定を送信します。"""
     target = dry_run.target
 
     print("")
     print(f"--- 使用アンテナ番号設定: {target.label} ---")
     print(f"送信フレーム: {dry_run.frame_hex}")
+
+    # 送信中にCtrl+Cや例外が入った場合でも、finally側で元設定へ戻せるようにするため、
+    # 実送信直前に復元が必要な状態として扱います。
+    if restore_state is not None:
+        restore_state["restore_required"] = True
+
     response = communicate(ser, dry_run.frame)
 
     if _is_ack(response):
         print("使用アンテナ番号設定コマンド: ACK")
         print(f"設定対象: {target.label} / 使用アンテナ番号 {target.usage_antenna_number_hex}")
+        if restore_state is not None:
+            restore_state["antenna_changed"] = True
+            restore_state["last_used_antenna_label"] = target.label
         return True
 
     if _is_nack(response):
@@ -485,7 +499,11 @@ def _send_usage_antenna_setting(ser: serial.Serial, dry_run) -> bool:
     return False
 
 
-def _run_sequential_inventory_loop(ser: serial.Serial, dry_runs) -> tuple[int, float, int, dict[str, int], dict[str, int], dict[str, int], str | None]:
+def _run_sequential_inventory_loop(
+    ser: serial.Serial,
+    dry_runs,
+    restore_state: dict[str, Any] | None = None,
+) -> tuple[int, float, int, dict[str, int], dict[str, int], dict[str, int], str | None]:
     """選択ANTを順番に切り替えながらInventoryを実行します。"""
     total_inventory_attempts = 0
     total_read_time = 0.0
@@ -527,10 +545,12 @@ def _run_sequential_inventory_loop(ser: serial.Serial, dry_runs) -> tuple[int, f
                 target = dry_run.target
                 label = target.label
 
-                if not _send_usage_antenna_setting(ser, dry_run):
+                if not _send_usage_antenna_setting(ser, dry_run, restore_state=restore_state):
                     ant_skip_counts[label] += 1
                     continue
                 last_used_antenna_label = label
+                if restore_state is not None:
+                    restore_state["last_used_antenna_label"] = label
 
                 print("")
                 print(f"--- {label} Inventory ---")
@@ -665,6 +685,44 @@ def _restore_original_usage_antenna_before_exit(
     }
 
 
+def _restore_original_usage_antenna_from_finally(
+    ser: serial.Serial | None,
+    original_setting: OriginalUsageAntennaSetting | None,
+    restore_state: dict[str, Any],
+) -> dict[str, Any] | None:
+    """例外・Ctrl+C時の最後の安全網として、シリアルクローズ前に自動復元を試みます。"""
+    if ser is None:
+        return None
+    if original_setting is None:
+        return None
+    if restore_state.get("restore_done"):
+        return None
+    if not restore_state.get("restore_required"):
+        return None
+
+    print("")
+    print("finally: 使用アンテナ番号の自動復元を試みます。")
+    try:
+        result = _restore_original_usage_antenna_before_exit(
+            ser,
+            original_setting,
+            restore_state.get("last_used_antenna_label"),
+        )
+        restore_state["restore_done"] = True
+        return result
+    except Exception as exc:
+        print("finally: 使用アンテナ番号の自動復元に失敗しました。")
+        print("UTRRWManagerまたは再実行時の読み取りで、機器側の現在設定を確認してください。")
+        print(f"自動復元エラー: {exc}")
+        restore_state["restore_done"] = True
+        return {
+            "requested": True,
+            "target_label": original_setting.label,
+            "success": False,
+            "message": "finally_restore_exception",
+        }
+
+
 def _ask_and_save_8ch_sequential_summary(
     selected_targets,
     total_inventory_attempts: int,
@@ -718,6 +776,13 @@ def main() -> None:
     baud_rate = parse_baud_rate_input(baud_rate_str)
 
     ser: serial.Serial | None = None
+    original_usage_antenna_setting: OriginalUsageAntennaSetting | None = None
+    restore_state: dict[str, Any] = {
+        "restore_required": False,
+        "antenna_changed": False,
+        "restore_done": False,
+        "last_used_antenna_label": None,
+    }
     try:
         ser = serial.Serial(
             port=port_name,
@@ -763,7 +828,8 @@ def main() -> None:
             ant_inventory_counts,
             ant_skip_counts,
             last_used_antenna_label,
-        ) = _run_sequential_inventory_loop(ser, dry_runs)
+        ) = _run_sequential_inventory_loop(ser, dry_runs, restore_state=restore_state)
+        restore_state["last_used_antenna_label"] = last_used_antenna_label
 
         print("")
         print("=== 8CH複数アンテナ順次Inventory結果まとめ ===")
@@ -779,11 +845,13 @@ def main() -> None:
                 f"/ Inventory実行 {ant_inventory_counts[label]} 回 "
                 f"/ スキップ {ant_skip_counts[label]} 回"
             )
+
         restore_result = _restore_original_usage_antenna_before_exit(
             ser,
             original_usage_antenna_setting,
             last_used_antenna_label,
         )
+        restore_state["restore_done"] = True
         _ask_and_save_8ch_sequential_summary(
             selected_targets=selected_targets,
             total_inventory_attempts=total_inventory_attempts,
@@ -803,6 +871,11 @@ def main() -> None:
         print("8CH複数アンテナ順次Inventory確認中にエラーが発生しました。")
         print(f"エラー内容: {exc}")
     finally:
+        _restore_original_usage_antenna_from_finally(
+            ser,
+            original_usage_antenna_setting,
+            restore_state,
+        )
         if ser is not None:
             close_serial_safely(ser)
 
