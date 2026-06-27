@@ -1,8 +1,8 @@
-# Takaya UTR-S201/202 USB Sample (Python)
+# Takaya UTR-S201 USB Sample (Python)
 
 ## プロジェクト概要
 
-このリポジトリは、TAKAYA製 RFID リーダライタ UTR-S201/202 シリーズを USBシリアル接続で扱う Python サンプルです。
+このリポジトリは、TAKAYA製 RFID リーダライタ UTR-S201 シリーズを USBシリアル接続で扱う Python サンプルです。
 
 現在は、通常Inventory確認に加えて、UTR-SUN02-4CH のアンテナ順次Inventory、UTR-SUN02-8CH / USM08 の複数アンテナ順次Inventory確認CLIも含みます。
 
@@ -412,9 +412,9 @@ RSSI: -xx.x dBm
 
 - 送信出力一時変更中のCtrl+C時の復元確認を追加する。
 - 変更送信後、読み戻し例外発生時の復元確認方法を検討する。
-- ANT別の平均RSSI、最小RSSI、最大RSSI、読み取り成功率を集計する。
+- ANT別の平均RSSI、最小RSSI、最大RSSI集計。
 - UTRRWManager側ログとPython側ログを比較する。
-- NACK/応答なし発生時のANT別エラー集計を強化する。
+- NACK/応答なしのANT別エラー集計を強化する。
 - Ctrl+Cや応答なしなど、異常終了時の実機確認結果を追加する。
 - 実機確認結果を踏まえて、サンプルとドキュメントを継続更新する。
 
