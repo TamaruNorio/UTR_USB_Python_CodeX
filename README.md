@@ -143,6 +143,7 @@ UTR_USB_Python_CodeX/
 │  ├─ utr_output_power.py
 │  ├─ utr_output_power_change.py
 │  ├─ utr_output_power_inventory_integration.py
+│  ├─ utr_output_power_io.py
 │  ├─ utr_output_power_readout.py
 │  ├─ utr_output_power_temporary_change.py
 │  ├─ utr_output_power_temporary_change_cli.py
@@ -175,9 +176,10 @@ UTR_USB_Python_CodeX/
 | `src/utr_output_power.py` | 送信出力値の dBm / raw値 / little-endian bytes 変換補助です。 |
 | `src/utr_output_power_change.py` | 送信出力設定書き込みフレームの計画補助です。 |
 | `src/utr_output_power_inventory_integration.py` | Inventory前に送信出力一時変更を提案できるか判定します。 |
+| `src/utr_output_power_io.py` | 送信出力設定の読み取りと、作成済み送信出力フレームの送信確認を行う共通I/Oです。 |
 | `src/utr_output_power_readout.py` | 送信出力読み取りレスポンスからキャリア関連時間を解析します。 |
 | `src/utr_output_power_temporary_change.py` | 一時変更用フレームと復元用フレームをセットで作成します。 |
-| `src/utr_output_power_temporary_change_cli.py` | 送信出力一時変更単体確認CLIです。現状は共通ヘルパーも含むため削除しません。 |
+| `src/utr_output_power_temporary_change_cli.py` | 送信出力一時変更単体確認CLIです。共通I/Oは `utr_output_power_io.py` に分離済みです。 |
 | `src/utr_privacy.py` | PC+UIIの画面表示・保存時マスク補助です。 |
 | `src/utr_protocol.py` | フレーム、SUM、NACKなどのプロトコル補助です。 |
 | `src/utr_reader_settings.py` | リーダ設定表示補助です。 |
@@ -256,7 +258,7 @@ inventory_results.json
 
 - 8CH Ctrl+C時の最終復元成功ログを取得する。
 - 送信出力一時変更中のCtrl+C時の復元確認を行う。
-- `src/utr_output_power_temporary_change_cli.py` から共通ヘルパーを分離し、CLI整理を検討する。
+- `src/utr_output_power_temporary_change_cli.py` を単体確認CLIとして残すか、標準入口へ統合して削除するか検討する。
 - `src/utr_usb_sample_legacy.py` の依存を段階的に解消し、将来的な削除を検討する。
 - READMEが再び肥大化した場合は、詳細説明をdocsへ分離する。
 
