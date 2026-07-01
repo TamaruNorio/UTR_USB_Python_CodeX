@@ -36,14 +36,11 @@ try:
         evaluate_output_power_temporary_change_availability,
         format_output_power_temporary_change_offer,
     )
+    from src.utr_output_power_io import _read_current_output_power_setting, _send_output_power_frame
     from src.utr_output_power_temporary_change import (
         OutputPowerTemporaryChangePlans,
         build_output_power_temporary_change_plans,
         format_output_power_temporary_change_plans,
-    )
-    from src.utr_output_power_temporary_change_cli import (
-        _read_current_output_power_setting,
-        _send_output_power_frame,
     )
     from src.utr_privacy import get_or_create_masked_pc_uii_id
     from src.utr_usb_sample import (
@@ -81,14 +78,11 @@ except ModuleNotFoundError:
         evaluate_output_power_temporary_change_availability,
         format_output_power_temporary_change_offer,
     )
+    from utr_output_power_io import _read_current_output_power_setting, _send_output_power_frame
     from utr_output_power_temporary_change import (
         OutputPowerTemporaryChangePlans,
         build_output_power_temporary_change_plans,
         format_output_power_temporary_change_plans,
-    )
-    from utr_output_power_temporary_change_cli import (
-        _read_current_output_power_setting,
-        _send_output_power_frame,
     )
     from utr_privacy import get_or_create_masked_pc_uii_id
     from utr_usb_sample import (
