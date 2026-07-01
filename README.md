@@ -50,6 +50,33 @@ py .\src\utr_8ch_sequential_inventory_cli.py
 11. 終了時に開始前の使用アンテナ番号へ自動復元
 12. 必要に応じてANT別サマリをCSV/JSON保存
 
+### USB Inventory batch runner
+
+USBシリアル接続で `UHF_INVENTORY` を指定回数だけ連続実行し、読み取り結果と集計をCSVへ保存する場合は、以下を実行します。
+
+```powershell
+py tools/usb_inventory_batch.py --port COM6 --baudrate 115200 --repeat 10 --interval 0.1
+```
+
+主なCLI引数は以下です。
+
+- `--port`: COMポート名です。例: `COM6`
+- `--baudrate`: ボーレートです。既定値は `115200` です。
+- `--repeat`: Inventory実行回数です。既定値は `10` です。
+- `--interval`: 各Inventory後の待ち時間秒です。既定値は `0.1` です。
+- `--no-buzzer`: 読み取り結果ブザーを送信しません。
+- `--csv`: CSV保存先を指定します。未指定時は自動生成します。
+
+CSV保存先の既定値は以下です。
+
+```text
+logs/usb_sample/inventory_batch_YYYYMMDD_HHMMSS.csv
+```
+
+CSV通常行には、主に `timestamp`、`iteration`、`read_time_sec`、`expected_read_count`、`actual_tag_count`、`rssi`、`pc_uii`、`output_power_dbm`、`channel`、`frequency_mhz`、`note` を保存します。
+
+CSV末尾には `SUMMARY` 行として、`total_iterations`、`total_read_time_sec`、`total_tag_responses`、`unique_tags`、`average_tag_count`、`min_rssi`、`max_rssi`、`average_rssi` を保存します。読み取りが0件の場合、RSSI集計値は空欄になります。
+
 ## 重要な安全ルール
 
 - FLASHデータへの書き込みは行いません。
@@ -59,6 +86,9 @@ py .\src\utr_8ch_sequential_inventory_cli.py
 - 8CH順次Inventoryでは、使用アンテナ番号設定をコマンドモード用パラメータだけへ送信します。FLASHへは保存しません。
 - 8CH終了時は、開始前に読み取った内部アンテナ番号・外部アンテナ番号へ自動復元します。
 - Ctrl+Cや例外時も、可能な範囲で `finally` 側から復元を試みます。
+- USB Inventory batch runner は `UHF_SET_INVENTORY_PARAM` を自動送信しません。
+- USB Inventory batch runner はFLASH書き込み、送信出力変更、周波数変更、8CHアンテナ切替を行いません。
+- USB Inventory batch runner は実機への永続設定変更を行いません。
 - 実タグIDを含む `PC+UII` / `PC+EPC` は、GitHub、Issue、PR本文、公開ログへ載せません。
 
 ## 現在の確認済み内容
@@ -155,6 +185,7 @@ UTR_USB_Python_CodeX/
 ├─ docs/
 ├─ scripts/
 ├─ tests/
+├─ tools/
 ├─ requirements.txt
 ├─ requirements-dev.txt
 └─ pytest.ini
@@ -185,6 +216,7 @@ UTR_USB_Python_CodeX/
 | `src/utr_reader_settings.py` | リーダ設定表示補助です。 |
 | `src/utr_result_export.py` | Inventory結果のCSV/JSON保存補助です。 |
 | `src/utr_serial_ports.py` | COMポート選択補助です。 |
+| `tools/usb_inventory_batch.py` | USB接続でInventoryを連続実行し、通常行とSUMMARY行をCSV保存するbatch runnerです。 |
 
 ## セットアップ
 
