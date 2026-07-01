@@ -66,6 +66,33 @@ py .\src\utr_8ch_sequential_inventory_cli.py
 20. 必要に応じて、8CH順次InventoryサマリをCSV/JSONへ保存する。
 21. シリアル接続を閉じる。
 
+### USB Inventory batch runner
+
+USBシリアル接続で `UHF_INVENTORY` を指定回数だけ連続実行し、読み取り結果と集計をCSVへ保存する場合は、以下を実行します。
+
+```powershell
+py tools/usb_inventory_batch.py --port COM6 --baudrate 115200 --repeat 10 --interval 0.1
+```
+
+主なCLI引数は以下です。
+
+- `--port`: COMポート名です。例: `COM6`
+- `--baudrate`: ボーレートです。既定値は `115200` です。
+- `--repeat`: Inventory実行回数です。既定値は `10` です。
+- `--interval`: 各Inventory後の待ち時間秒です。既定値は `0.1` です。
+- `--no-buzzer`: 読み取り結果ブザーを送信しません。
+- `--csv`: CSV保存先を指定します。未指定時は自動生成します。
+
+CSV保存先の既定値は以下です。
+
+```text
+logs/usb_sample/inventory_batch_YYYYMMDD_HHMMSS.csv
+```
+
+CSV通常行には、主に `timestamp`、`iteration`、`read_time_sec`、`expected_read_count`、`actual_tag_count`、`rssi`、`pc_uii`、`output_power_dbm`、`channel`、`frequency_mhz`、`note` を保存します。
+
+CSV末尾には `SUMMARY` 行として、`total_iterations`、`total_read_time_sec`、`total_tag_responses`、`unique_tags`、`average_tag_count`、`min_rssi`、`max_rssi`、`average_rssi` を保存します。読み取りが0件の場合、RSSI集計値は空欄になります。
+
 ## 重要な制約
 
 - USB接続は仮想COMポートとして扱います。
@@ -81,6 +108,9 @@ py .\src\utr_8ch_sequential_inventory_cli.py
 - 異常終了時の自動復元では、受信バッファ内に残ったInventory応答をクリアしてから復元コマンドを送信します。
 - 復元コマンドの再試行は、同じ復元フレームを1回だけ送信します。
 - UTR-SUN02V-8CH と UTR-SUN02-8CH はROMシリーズ名と機種識別までは扱いますが、UTR-SUN02-8CH用の実送信CLIは USM08 を対象にします。
+- USB Inventory batch runner は `UHF_SET_INVENTORY_PARAM` を自動送信しません。
+- USB Inventory batch runner はFLASH書き込み、送信出力変更、周波数変更、8CHアンテナ切替を行いません。
+- USB Inventory batch runner は実機への永続設定変更を行いません。
 - 実タグIDを含む `PC+UII` / `PC+EPC` は、GitHub、Issue、PR本文、公開ログへ載せません。
 - 実行時に `PC+UIIを画面表示でマスクしますか？` で `y` を選ぶと、画面表示だけ `PC+UII: 省略` にできます。
 
@@ -134,6 +164,7 @@ UTR_USB_Python_CodeX/
 │  ├─ utr_privacy.py
 │  └─ utr_result_export.py
 ├─ tests/
+├─ tools/
 ├─ docs/
 ├─ scripts/
 ├─ requirements.txt
@@ -163,6 +194,7 @@ UTR_USB_Python_CodeX/
 | `src/utr_serial_ports.py` | COMポート選択補助関数です。 |
 | `src/utr_privacy.py` | PC+UIIの画面表示・保存時マスク補助関数です。 |
 | `src/utr_result_export.py` | Inventory集計結果のCSV/JSON保存補助関数です。 |
+| `tools/usb_inventory_batch.py` | USB接続でInventoryを連続実行し、通常行とSUMMARY行をCSV保存するbatch runnerです。 |
 | `docs/` | 作業計画、確認手順、比較テンプレート、設計資料です。 |
 | `scripts/dev_check.ps1` | ローカル開発確認スクリプトです。 |
 | `scripts/git_preflight.ps1` | コミット/PR前の確認スクリプトです。 |
@@ -253,6 +285,18 @@ ANT3: 読み取り 164 枚 / Inventory実行 2 回 / スキップ 0 回
 最後に使用したANT: ANT3
 自動復元完了: ANT3/EXT5 / 使用アンテナ番号 44h
 ```
+
+### USB Inventory batch runner
+
+```powershell
+py tools/usb_inventory_batch.py --port COM6 --baudrate 115200 --repeat 10 --interval 0.1
+```
+
+このツールは、USB接続で `UHF_INVENTORY` を連続実行し、タグ応答、RSSI、読み取り時間、読み取りチャンネルなどをCSVへ保存します。`--csv` を省略した場合は、`logs/usb_sample/inventory_batch_YYYYMMDD_HHMMSS.csv` に保存します。
+
+CSVにはInventoryごとの通常行に加えて、末尾に `SUMMARY` 行を出力します。SUMMARYには総Inventory回数、総読み取り時間、総タグ応答数、ユニークタグ数、平均タグ応答数、RSSI最小値、RSSI最大値、RSSI平均値を保存します。
+
+このbatch runnerは確認用の読み取りツールです。`UHF_SET_INVENTORY_PARAM`、FLASH書き込み、送信出力変更、周波数変更、8CHアンテナ切替、実機への永続設定変更は行いません。
 
 ## テスト実行
 
