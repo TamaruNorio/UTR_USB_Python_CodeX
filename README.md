@@ -26,6 +26,15 @@ $env:PYTHONPATH = "."
 py -m src.utr_usm02_safe_controls_cli --target-antenna 1
 ```
 
+ANT0・ANT1・ANT2を順番に1回ずつInventoryし、タグ応答があったANTだけブザーを鳴らす確認は、次の専用CLIを使います。
+
+```powershell
+$env:PYTHONPATH = "."
+py -m src.utr_usm02_inventory_buzzer_cli --antennas 0,1,2
+```
+
+実機実行時も最初にROM、設定、ANT0〜ANT3の物理接続を再取得します。指定ANTが1つでも接続OKでない場合、Inventory前に停止します。タグ固有値は表示・JSON保存しません。
+
 ### 1. 標準Inventoryフロー
 
 ```powershell

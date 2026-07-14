@@ -128,7 +128,44 @@ py -m src.utr_usm02_safe_controls_cli `
 
 例外、NACK、読戻し不一致の場合も `finally` で周波数、アンテナの順に復元します。復元確認に失敗した場合は後続操作を行わず、UTRRWManagerまたは読取コマンドで現在値を確認してください。
 
-## 7. 開発者確認
+## 7. ANT0〜2 Inventory・タグ検出時ブザー確認
+
+ANT0、ANT1、ANT2へタグを1枚ずつ置いた状態で、アンテナ別の読取と条件付きブザーを確認します。これは54コマンド全件検証とは分けた、限定的な実機確認です。
+
+dry-run:
+
+```powershell
+$env:PYTHONPATH = "."
+py -m src.utr_usm02_inventory_buzzer_cli --antennas 0,1,2
+```
+
+実機実行:
+
+```powershell
+$env:PYTHONPATH = "."
+py -m src.utr_usm02_inventory_buzzer_cli `
+  --execute `
+  --port COM6 `
+  --baudrate 115200 `
+  --antennas 0,1,2 `
+  --json-out runtime_logs\usm02_ant012_inventory_buzzer.json
+```
+
+実行順序:
+
+1. ROM、応答依存設定、ANT0〜ANT3の物理接続を再取得する。
+2. アンテナID出力がON、EPCバッファリングがOFF、ANT0〜2がすべて接続OKであることを確認する。
+3. 開始前のコマンドモードRAMアンテナ設定を読み取る。
+4. ANT0、ANT1、ANT2の順にRAM設定を切り替え、毎回読み戻す。
+5. 各ANTでInventoryを1回だけ実行する。
+6. タグ応答が1件以上のANTだけ、応答要求ありの「ピッピッピ」ブザーを1回送信しACKを確認する。
+7. 開始前のアンテナ設定へ戻し、読み戻す。
+
+画面とJSONへ残すのは、ANT別のタグ応答数、ユニークタグ数、完了ACK枚数、実使用CH、ブザーACK、復元結果だけです。PC/UII/EPC/TID、生フレームは残しません。タグが0件のANTではブザーを送信しません。NACK、timeout、応答不正、ANT番号不一致が出た場合は後続ANTへ進まず、`finally` で開始前のアンテナ設定へ復元します。
+
+ブザーACKはリーダライタがコマンドを正常受理した確認です。実際に音が聞こえたかは自動判定できないため、ANT0、ANT1、ANT2ごとに人が確認し、ACK結果とは分けて記録します。
+
+## 8. 開発者確認
 
 ```powershell
 $env:PYTHONPATH = "."

@@ -75,7 +75,7 @@ def choose_temporary_channel(setting: FrequencySetting, requested: int | None = 
     raise ValueError("現在の開始CH以外に、使用許可済みの試験CHがありません")
 
 
-def _verify(section: str, response: bytes, profile: DeviceProfile) -> None:
+def verify_ack(section: str, response: bytes, profile: DeviceProfile) -> None:
     verification = verify_command_response(get_command_spec(section), response, profile)
     if verification.result != VerificationResult.ACK_VERIFIED:
         raise RuntimeError(
@@ -83,12 +83,16 @@ def _verify(section: str, response: bytes, profile: DeviceProfile) -> None:
         )
 
 
-def _read_antenna_setting(ser, exchange: Exchange, profile: DeviceProfile) -> AntennaSwitchingSetting:
+def read_command_mode_antenna_setting(
+    ser,
+    exchange: Exchange,
+    profile: DeviceProfile,
+) -> AntennaSwitchingSetting:
     response = exchange(
         ser,
         build_read_antenna_switching_setting_command(PARAMETER_KIND_COMMAND_MODE),
     )
-    _verify("7.4.5", response, profile)
+    verify_ack("7.4.5", response, profile)
     setting = parse_antenna_switching_setting_response(response)
     if setting.parameter_kind != PARAMETER_KIND_COMMAND_MODE:
         raise RuntimeError("コマンドモード以外のアンテナ設定応答です")
@@ -100,14 +104,14 @@ def _read_frequency_setting(ser, exchange: Exchange, profile: DeviceProfile) -> 
         ser,
         build_read_frequency_setting_command(PARAMETER_KIND_COMMAND_MODE),
     )
-    _verify("7.4.7", response, profile)
+    verify_ack("7.4.7", response, profile)
     setting = parse_frequency_setting_response(response)["setting"]
     if setting.parameter_kind != PARAMETER_KIND_COMMAND_MODE:
         raise RuntimeError("コマンドモード以外の周波数設定応答です")
     return setting
 
 
-def _write_antenna(
+def write_command_mode_antenna_setting(
     ser,
     exchange: Exchange,
     profile: DeviceProfile,
@@ -123,11 +127,11 @@ def _write_antenna(
             antenna_mask=antenna_mask,
         ),
     )
-    _verify("7.4.20", response, profile)
+    verify_ack("7.4.20", response, profile)
     acknowledged = parse_antenna_switching_setting_write_response(response)
     if acknowledged.antenna_mask != antenna_mask:
         raise RuntimeError("アンテナ書込ACKの設定値が要求値と一致しません")
-    readback = _read_antenna_setting(ser, exchange, profile)
+    readback = read_command_mode_antenna_setting(ser, exchange, profile)
     if (
         readback.antenna_mask != antenna_mask
         or readback.switching_mode != original.switching_mode
@@ -153,7 +157,7 @@ def _write_frequency(
             reserved=original.reserved,
         ),
     )
-    _verify("7.4.22", response, profile)
+    verify_ack("7.4.22", response, profile)
     readback = _read_frequency_setting(ser, exchange, profile)
     if readback.starting_channel != starting_channel:
         raise RuntimeError("周波数設定の開始CH読戻しが要求値と一致しません")
@@ -162,7 +166,7 @@ def _write_frequency(
     return readback
 
 
-def _clear_before_restore(ser) -> None:
+def clear_before_restore(ser) -> None:
     reset = getattr(ser, "reset_input_buffer", None)
     if callable(reset):
         reset()
@@ -181,7 +185,7 @@ def execute_safe_controls(
     if target_antenna not in profile.connected_antennas:
         raise ValueError(f"ANT{target_antenna} はUHF_CheckAntennaで接続OKではありません")
 
-    original_antenna = _read_antenna_setting(ser, exchange, profile)
+    original_antenna = read_command_mode_antenna_setting(ser, exchange, profile)
     original_frequency = _read_frequency_setting(ser, exchange, profile)
     temporary_channel = choose_temporary_channel(original_frequency, requested_channel)
     temporary_mask = 1 << target_antenna
@@ -216,12 +220,18 @@ def execute_safe_controls(
 
     try:
         buzzer_response = exchange(ser, build_buzzer_command(response_required=True, sound_type=0x00))
-        _verify("7.3.2", buzzer_response, profile)
+        verify_ack("7.3.2", buzzer_response, profile)
         buzzer_verified = True
 
         if original_antenna.antenna_mask != temporary_mask:
             antenna_restore_needed = True
-            _write_antenna(ser, exchange, profile, original_antenna, temporary_mask)
+            write_command_mode_antenna_setting(
+                ser,
+                exchange,
+                profile,
+                original_antenna,
+                temporary_mask,
+            )
 
         frequency_restore_needed = True
         _write_frequency(ser, exchange, profile, original_frequency, temporary_channel)
@@ -260,7 +270,7 @@ def execute_safe_controls(
     finally:
         if frequency_restore_needed:
             try:
-                _clear_before_restore(ser)
+                clear_before_restore(ser)
                 restored_frequency = _write_frequency(
                     ser,
                     exchange,
@@ -277,8 +287,8 @@ def execute_safe_controls(
 
         if antenna_restore_needed:
             try:
-                _clear_before_restore(ser)
-                restored_antenna = _write_antenna(
+                clear_before_restore(ser)
+                restored_antenna = write_command_mode_antenna_setting(
                     ser,
                     exchange,
                     profile,
