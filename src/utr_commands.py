@@ -56,6 +56,10 @@ DETAIL_READER_SETTING_WRITE = 0x33
 
 # 出力設定のサブコマンドです。
 OUTPUT_SETTING_PARAMETER = 0x01
+FREQUENCY_SETTING_PARAMETER = 0x02
+
+# Ver.1.17 7.4.7/7.4.22で指定可能なチャンネルです。
+VALID_FREQUENCY_CHANNELS = (5, 11, 17, *range(23, 38))
 
 # 初期実装で許可する出力設定書き込み先です。
 # FLASHデータは、将来の明示設計までは生成対象外にします。
@@ -182,6 +186,62 @@ def build_read_antenna_switching_setting_command(parameter_kind: int = PARAMETER
     """
     _validate_byte_value(parameter_kind, "parameter_kind")
     return build_frame(0x55, bytes([DETAIL_READER_SETTING_READ, 0x00, parameter_kind]))
+
+
+def build_read_frequency_setting_command(parameter_kind: int = PARAMETER_KIND_COMMAND_MODE) -> bytes:
+    """周波数設定（7.4.7）の読み取りコマンドを生成します。"""
+    _validate_byte_value(parameter_kind, "parameter_kind")
+    return build_frame(
+        0x55,
+        bytes([DETAIL_READER_SETTING_READ, FREQUENCY_SETTING_PARAMETER, parameter_kind]),
+    )
+
+
+def _encode_frequency_channel_mask(enabled_channels: tuple[int, ...]) -> bytes:
+    if not enabled_channels:
+        raise ValueError("enabled_channels must not be empty")
+    unknown = set(enabled_channels) - set(VALID_FREQUENCY_CHANNELS)
+    if unknown:
+        raise ValueError(f"unsupported frequency channels: {sorted(unknown)}")
+    mask = bytearray(3)
+    for channel in set(enabled_channels):
+        index = VALID_FREQUENCY_CHANNELS.index(channel)
+        mask[index // 8] |= 1 << (index % 8)
+    return bytes(mask)
+
+
+def build_write_frequency_setting_command(
+    parameter_kind: int,
+    starting_channel: int,
+    enabled_channels: tuple[int, ...],
+    reserved: bytes = b"\x00\x00\x00\x00",
+) -> bytes:
+    """コマンドモードRAM用の周波数設定（7.4.22）を生成します。
+
+    FLASHや自動読み取りモードへの誤書き込みを防ぐため、書き込み先は
+    コマンドモード用パラメータ（00h）だけを許可します。
+    """
+    if parameter_kind != PARAMETER_KIND_COMMAND_MODE:
+        raise ValueError("frequency test only allows command-mode RAM parameters")
+    if starting_channel not in VALID_FREQUENCY_CHANNELS:
+        raise ValueError(f"unsupported starting channel: {starting_channel}")
+    if starting_channel not in enabled_channels:
+        raise ValueError("starting_channel must be included in enabled_channels")
+    if len(reserved) != 4:
+        raise ValueError("reserved must be exactly 4 bytes")
+    channel_mask = _encode_frequency_channel_mask(enabled_channels)
+    data = (
+        bytes([
+            DETAIL_READER_SETTING_WRITE,
+            FREQUENCY_SETTING_PARAMETER,
+            parameter_kind,
+            starting_channel,
+            0x00,
+        ])
+        + channel_mask
+        + reserved
+    )
+    return build_frame(0x55, data)
 
 
 def build_check_antenna_command(antenna_number: int) -> bytes:

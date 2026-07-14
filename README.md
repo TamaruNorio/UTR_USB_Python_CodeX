@@ -10,6 +10,31 @@
 
 通常使う入口は、原則として次の2つです。
 
+54コマンドの仕様照合・USM02実機事前確認は、通常Inventoryとは分けて次の専用CLIを使います。
+
+```powershell
+$env:PYTHONPATH = "."
+py -m src.utr_usm02_v117_validation_cli --rom-number 2052
+```
+
+既定はdry-runで、COMポートを開きません。詳細は [USM02 Ver.1.17 54コマンド検証](docs/usm02_v117_54_command_validation.md) を参照してください。
+
+bootstrap後のブザー・ANT1一時切替・周波数開始CH一時変更は、次のPhase 2 CLIをdry-runしてから実行します。
+
+```powershell
+$env:PYTHONPATH = "."
+py -m src.utr_usm02_safe_controls_cli --target-antenna 1
+```
+
+ANT0・ANT1・ANT2を順番に1回ずつInventoryし、タグ応答があったANTだけブザーを鳴らす確認は、次の専用CLIを使います。
+
+```powershell
+$env:PYTHONPATH = "."
+py -m src.utr_usm02_inventory_buzzer_cli --antennas 0,1,2
+```
+
+実機実行時も最初にROM、設定、ANT0〜ANT3の物理接続を再取得します。指定ANTが1つでも接続OKでない場合、Inventory前に停止します。タグ固有値は表示・JSON保存しません。
+
 ### 1. 標準Inventoryフロー
 
 ```powershell

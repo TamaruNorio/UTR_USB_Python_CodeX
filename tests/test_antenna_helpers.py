@@ -285,4 +285,3 @@ def test_parse_antenna_switching_setting_write_response_for_command_mode_ant1():
     assert setting.antenna_id_output_enabled is True
     assert setting.antenna_mask == 0x02
     assert setting.enabled_antennas == [1]
-

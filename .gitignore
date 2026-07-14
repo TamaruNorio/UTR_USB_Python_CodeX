@@ -10,6 +10,7 @@ dist/
 build/
 .pytest_cache/
 logs/
+runtime_logs/
 pr_body.md
 inventory_results.txt
 inventory_results.csv
