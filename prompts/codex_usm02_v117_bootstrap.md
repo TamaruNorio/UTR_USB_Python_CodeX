@@ -20,11 +20,13 @@
 
 ```powershell
 cd C:\Users\tamaru\Documents\Codex\repos\UTR_USB_Python_CodeX
+git fetch origin
+git switch feature/usm02-v117-validation-harness
+git pull --ff-only
 git status --short
 git branch --show-current
 $env:PYTHONPATH = "."
-$env:UV_CACHE_DIR = "$env:TEMP\uv-cache"
-uv run --with pytest --with "pyserial>=3.5" pytest -q
+py -m pytest -q
 py -m src.utr_usm02_v117_validation_cli --rom-number 2052
 py -m src.utr_usm02_v117_validation_cli --execute-bootstrap --port COM6 --baudrate 115200 --json-out runtime_logs\usm02_v117_bootstrap.json
 git status --short

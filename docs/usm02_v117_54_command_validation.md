@@ -92,8 +92,7 @@ py -m src.utr_usm02_v117_validation_cli `
 
 ```powershell
 $env:PYTHONPATH = "."
-$env:UV_CACHE_DIR = "$env:TEMP\uv-cache"
-uv run --with pytest --with "pyserial>=3.5" pytest -q
+py -m pytest -q
 py -m compileall -q src tests
 git diff --check
 ```
