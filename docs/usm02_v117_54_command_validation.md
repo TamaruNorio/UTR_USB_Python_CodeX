@@ -88,7 +88,47 @@ py -m src.utr_usm02_v117_validation_cli `
 
 まず実機事前確認結果からROMと設定依存条件を確定し、その結果に基づいて実行可能なコマンドだけを次の実装単位へ進めます。これにより、非対応コマンドや破壊的コマンドを「54件達成」のために誤送信することを防ぎます。
 
-## 6. 開発者確認
+## 6. Phase 2: 安全制御確認
+
+bootstrapが正常で、USM02、接続ANT、設定値を確認できた場合だけ実行します。
+
+dry-run:
+
+```powershell
+$env:PYTHONPATH = "."
+py -m src.utr_usm02_safe_controls_cli --target-antenna 1
+```
+
+実機実行:
+
+```powershell
+$env:PYTHONPATH = "."
+py -m src.utr_usm02_safe_controls_cli `
+  --execute `
+  --port COM6 `
+  --baudrate 115200 `
+  --target-antenna 1 `
+  --verify-rf-channel `
+  --json-out runtime_logs\usm02_phase2_safe_controls.json
+```
+
+実行内容:
+
+1. ROM、応答依存設定、ANT0〜ANT3の接続状態を再取得する。
+2. ブザー制御を応答要求ありで1回実行し、ACKを確認する。
+3. コマンドモードRAMのアンテナを接続OKのANT1へ一時変更する。
+4. アンテナ設定を読み戻す。
+5. コマンドモードRAMの周波数開始CHを、現在使用許可されている26〜32ch内の別CHへ一時変更する。
+6. 周波数設定を読み戻し、使用許可CHマスクが不変であることを確認する。
+7. Inventoryを1回だけ実行し、タグ固有値を保存せず、タグ応答ANTと完了ACKの実使用CHを確認する。
+8. 周波数開始CHを元へ戻して読み戻す。
+9. アンテナ設定を元へ戻して読み戻す。
+
+周波数確認で変更するのはRAM上の「開始チャンネル番号」だけです。使用許可CHは変更せず、FLASHへ保存しません。`--verify-rf-channel` を指定した場合だけInventoryを1回実行します。タグのPC/UII/EPC/TIDは表示・保存せず、応答件数、アンテナ番号、完了ACKの実使用CHだけを残します。「現在設定されているチャンネル番号」は最後にキャリア出力したCHなので、Inventory前の読戻し時点では変化していなくても正常です。
+
+例外、NACK、読戻し不一致の場合も `finally` で周波数、アンテナの順に復元します。復元確認に失敗した場合は後続操作を行わず、UTRRWManagerまたは読取コマンドで現在値を確認してください。
+
+## 7. 開発者確認
 
 ```powershell
 $env:PYTHONPATH = "."

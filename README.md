@@ -19,6 +19,13 @@ py -m src.utr_usm02_v117_validation_cli --rom-number 2052
 
 既定はdry-runで、COMポートを開きません。詳細は [USM02 Ver.1.17 54コマンド検証](docs/usm02_v117_54_command_validation.md) を参照してください。
 
+bootstrap後のブザー・ANT1一時切替・周波数開始CH一時変更は、次のPhase 2 CLIをdry-runしてから実行します。
+
+```powershell
+$env:PYTHONPATH = "."
+py -m src.utr_usm02_safe_controls_cli --target-antenna 1
+```
+
 ### 1. 標準Inventoryフロー
 
 ```powershell

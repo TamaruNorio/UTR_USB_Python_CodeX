@@ -66,6 +66,57 @@ def _assert_verified(section: str, response: bytes, profile, *, response_request
         raise RuntimeError(f"{section} の応答検証に失敗しました: {result.result.value}; {' / '.join(result.notes)}")
 
 
+def collect_bootstrap_profile(ser, communicate):
+    """接続済みserialからUSM02の応答解釈用プロファイルを収集する。"""
+    rom_response = communicate(ser, COMMANDS["ROM_VERSION_CHECK"])
+    rom = parse_rom_version_response(rom_response)
+    model_key = identify_model_key_from_rom(rom)
+    if model_key != "UTR-SUN02-4CH":
+        raise RuntimeError(f"対象機種不一致のため停止します: ROM={rom.raw_text}, model={model_key}")
+
+    # コマンドモードへ切替。FLASHは変更しない。
+    mode_response = communicate(ser, COMMANDS["COMMAND_MODE_SET"])
+
+    antenna_response = communicate(
+        ser,
+        build_read_antenna_switching_setting_command(PARAMETER_KIND_COMMAND_MODE),
+    )
+    antenna_setting = parse_antenna_switching_setting_response(antenna_response)
+
+    model = get_model_profile(model_key)
+    connected: list[int] = []
+    for target in model.check_targets:
+        response = communicate(ser, build_check_antenna_command(target.number))
+        check = parse_check_antenna_response(response)
+        if check.is_connected:
+            connected.append(target.number)
+
+    inventory_response = communicate(ser, build_frame(0x55, b"\x41\x00"))
+    inventory_settings = parse_inventory_param_response(inventory_response)
+
+    epc_command_response = communicate(ser, build_frame(0x55, b"\x43\x05\x00"))
+    epc_command = parse_epc_uii_response_settings(epc_command_response)
+    epc_auto_response = communicate(ser, build_frame(0x55, b"\x43\x05\x01"))
+    epc_auto = parse_epc_uii_response_settings(epc_auto_response)
+
+    profile = build_usm02_device_profile(
+        rom,
+        antenna_setting,
+        connected,
+        inventory_tid_enabled=inventory_settings["tid_enabled"],
+        epc_buffering_enabled=epc_command.epc_buffering_enabled,
+        read_cycle_completion_enabled=epc_auto.read_cycle_completion_enabled,
+        antenna_switch_completion_enabled=epc_auto.antenna_switch_completion_enabled,
+        carrier_detect_response_enabled=epc_auto.carrier_detect_response_enabled,
+    )
+    _assert_verified("7.4.16", mode_response, profile)
+    _assert_verified("7.4.5", antenna_response, profile)
+    _assert_verified("7.4.3", inventory_response, profile)
+    _assert_verified("7.4.9", epc_command_response, profile)
+    _assert_verified("7.4.9", epc_auto_response, profile)
+    return profile
+
+
 def _execute_bootstrap(port: str, baudrate: int):
     """ROM、コマンドモード設定、応答依存設定、物理ANT状態を安全に取得する。"""
     import serial
@@ -76,55 +127,9 @@ def _execute_bootstrap(port: str, baudrate: int):
     with serial.Serial(port=port, baudrate=baudrate, timeout=0.05) as ser:
         ser.reset_input_buffer()
         ser.reset_output_buffer()
+        profile = collect_bootstrap_profile(ser, communicate)
 
-        rom_response = communicate(ser, COMMANDS["ROM_VERSION_CHECK"])
-        rom = parse_rom_version_response(rom_response)
-        model_key = identify_model_key_from_rom(rom)
-        if model_key != "UTR-SUN02-4CH":
-            raise RuntimeError(f"対象機種不一致のため停止します: ROM={rom.raw_text}, model={model_key}")
-
-        # コマンドモードへ切替。FLASHは変更しない。
-        mode_response = communicate(ser, COMMANDS["COMMAND_MODE_SET"])
-
-        antenna_response = communicate(
-            ser,
-            build_read_antenna_switching_setting_command(PARAMETER_KIND_COMMAND_MODE),
-        )
-        antenna_setting = parse_antenna_switching_setting_response(antenna_response)
-
-        model = get_model_profile(model_key)
-        connected: list[int] = []
-        for target in model.check_targets:
-            response = communicate(ser, build_check_antenna_command(target.number))
-            check = parse_check_antenna_response(response)
-            if check.is_connected:
-                connected.append(target.number)
-
-        inventory_response = communicate(ser, build_frame(0x55, b"\x41\x00"))
-        inventory_settings = parse_inventory_param_response(inventory_response)
-
-        epc_command_response = communicate(ser, build_frame(0x55, b"\x43\x05\x00"))
-        epc_command = parse_epc_uii_response_settings(epc_command_response)
-        epc_auto_response = communicate(ser, build_frame(0x55, b"\x43\x05\x01"))
-        epc_auto = parse_epc_uii_response_settings(epc_auto_response)
-
-        profile = build_usm02_device_profile(
-            rom,
-            antenna_setting,
-            connected,
-            inventory_tid_enabled=inventory_settings["tid_enabled"],
-            epc_buffering_enabled=epc_command.epc_buffering_enabled,
-            read_cycle_completion_enabled=epc_auto.read_cycle_completion_enabled,
-            antenna_switch_completion_enabled=epc_auto.antenna_switch_completion_enabled,
-            carrier_detect_response_enabled=epc_auto.carrier_detect_response_enabled,
-        )
-        _assert_verified("7.4.16", mode_response, profile)
-        _assert_verified("7.4.5", antenna_response, profile)
-        _assert_verified("7.4.3", inventory_response, profile)
-        _assert_verified("7.4.9", epc_command_response, profile)
-        _assert_verified("7.4.9", epc_auto_response, profile)
-
-    print("ROM:", rom.raw_text)
+    print("ROM:", profile.rom.raw_text)
     print("機種:", profile.model_key)
     print("物理容量:", profile.antenna_capacity)
     print("設定アンテナ:", list(profile.configured_antennas))
